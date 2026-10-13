@@ -142,6 +142,8 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | `gog-login`: `state mismatch`, and the callback page then shows `404 page not found` | `gog` accepts one callback per run. A callback from an earlier attempt (a stale tab, a reload) arrived first, so `gog` exited and the temporary route closed. | Close old `…:8443/oauth2/callback` tabs, rerun `gog-login`, and open only the new URL. |
 | `gog-login`: `no refresh token received; try again with --force-consent` | The account already granted these scopes to the project, so Google skipped the consent screen. | Rerun `gog-login` with `--force-consent`. |
 | Gmail watcher can't read its token | `GOG_KEYRING_PASSWORD` isn't set as a Railway variable; the watcher runs without a terminal. | Set it to `gog`'s keyring password. |
+| A portal URL (`https://openclaw.<tailnet>.ts.net:<port>/`) times out, while the dashboard works | The access policy allows 443 but not the portal's port. | Allow `tcp:32768-38768` in the grant ([TAILSCALE.md](TAILSCALE.md#portals)). |
+| A portal says "This portal is private. Open it from the OpenClaw Control UI." (401) | The link lacks the portal token, or the portal was reopened with a new one. | Open it from the dashboard's Portals page or use the full link the agent gave. |
 | A portal shows "Waiting for the app on port …" | The development server isn't running; a server started in the background by an agent turn run from the CLI didn't outlive the turn. | Start the server again (or ask the agent from the dashboard or a chat); the portal reconnects. |
 
 ## Running the tests locally
