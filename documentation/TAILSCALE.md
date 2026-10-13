@@ -49,8 +49,9 @@ In the [admin console](https://login.tailscale.com/admin):
      "grants": [
        // Only the operator's devices may reach the Gateway, and only HTTPS.
        // 8443 is gog-login's temporary Google sign-in callback (TOOLS.md);
-       // drop it if you don't use gog.
-       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:8443"] },
+       // drop it if you don't use gog. 32768-38768 is where OpenClaw portals
+       // get their HTTPS ports (see Portals below); drop it if you don't use them.
+       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:8443", "tcp:32768-38768"] },
      ],
      "tests": [
        { "src": "you@example.com", "accept": ["tag:openclaw:443"] },
@@ -63,8 +64,8 @@ In the [admin console](https://login.tailscale.com/admin):
    equivalent), every tailnet member can reach and sign in to the Gateway;
    narrow it. The `openclaw` node gets no grants of its own, so it cannot open
    connections to anything else on your tailnet even if the Gateway is
-   compromised. If you use OpenClaw portals, they allocate further Serve HTTPS
-   ports that the grant must also allow.
+   compromised. Only ports with a Serve route answer: the Gateway listens on
+   loopback, so allowing the portal range exposes nothing until a portal opens.
 
 ## 2. Authenticate the node
 
@@ -105,6 +106,35 @@ certificate (observed ≈15.6 s locally); later requests are fast. From a device
 the policy does not allow, the same `curl` should time out. In the container,
 the Gateway logs `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/`
 when Serve is up.
+
+## Portals
+
+[Portals](https://docs.openclaw.ai/gateway/portals) let an agent show you a
+development server it runs on the Gateway (live reload included) in the
+dashboard's **Portals** page (`https://openclaw.<tailnet>.ts.net/portals`).
+They work with no extra setup, through OpenClaw-managed Serve:
+
+- **Each portal gets its own HTTPS port** on the machine's tailnet address, for
+  example `https://openclaw.<tailnet>.ts.net:35079/`. The port is an ephemeral
+  port of the container, which on Railway is in **32768–38768** (checked
+  2026-10-13 with `cat /proc/sys/net/ipv4/ip_local_port_range`; Docker's default
+  elsewhere is 32768–60999). A restrictive access policy must allow that range,
+  as in the grant above; otherwise portal URLs time out.
+- **Access needs the portal's token**, which is in the link the agent and the
+  dashboard give you. Tailnet identity doesn't grant access, and the token works
+  for anyone who can reach the port, so treat portal links like passwords. The
+  first request stores it in a cookie and strips it before the app sees it.
+- **Portals end** when the agent closes them or the Gateway restarts (every
+  redeploy). Closing a portal doesn't stop the development server; ask the agent
+  to stop it.
+- **Tool policy**: the `portal` tool comes with the `coding` and `full` tool
+  profiles and is owner-only. A restricted agent such as the webhook reader
+  (`minimal` profile) can't open portals. `tools.deny: ["portal"]` turns them off.
+- **Not set up by the template**: OpenClaw's wildcard reverse-proxy ingress
+  (`gateway.portals.ingress`) needs your own wildcard DNS, certificate, and a
+  private edge; a Railway domain would make previews public. Managed Serve makes
+  it unnecessary. Portals on node-backed cloud workers depend on the node, not
+  on this deployment.
 
 ## Operations
 
