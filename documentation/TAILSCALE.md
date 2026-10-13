@@ -2,7 +2,9 @@
 
 Tailscale runs inside the `openclaw` container, and OpenClaw manages Tailscale
 Serve itself (`gateway.tailscale.mode: serve`). The container joins your tailnet
-as a machine named `openclaw`, and the Gateway is reachable at:
+as a machine named after the Gateway's name (`OPENCLAW_MACHINE_DISPLAY_NAME`,
+which the template asks for: `My Gateway` → `my-gateway`), or `openclaw` without
+one. The examples here use `openclaw`. The Gateway is reachable at:
 
 | Tailnet address | Transport | Served by |
 | --- | --- | --- |
@@ -19,7 +21,8 @@ why forwarded headers can't be abused is in
 | Variable | Set in | Value | Effect |
 | --- | --- | --- | --- |
 | `TS_AUTHKEY` | Railway (secret) | `tskey-auth-…` | Used only when the node is logged out: first boot, or after the machine was removed from the tailnet. Passed to `tailscale up` through a temporary file, then unset before the Gateway starts. |
-| `TS_HOSTNAME` | image (override in Railway) | `openclaw` | MagicDNS name requested at first login. If the name is taken, Tailscale appends a suffix such as `openclaw-1`; nothing in the template depends on the name. |
+| `OPENCLAW_MACHINE_DISPLAY_NAME` | Railway (the template asks) | e.g. `My Gateway` | The machine name requested at first login is derived from it: lowercased, accents dropped, and every other run of characters outside a–z and 0–9 turned into one hyphen, cut to 63 characters. Unset: `openclaw`. If the name is taken, Tailscale appends a suffix such as `-1`; nothing in the template depends on the name. |
+| `TS_HOSTNAME` | Railway (optional) | e.g. `openclaw` | Overrides the derived machine name. Made into a DNS label the same way. |
 | `TS_STATE_DIR` | image | `/data/tailscale` | Node key, identity, and certificates, on the service's volume. |
 | `TS_SOCKET` | image | `/var/run/tailscale/tailscaled.sock` | The CLI's default path, so `tailscale` and OpenClaw find the daemon without flags. |
 | `TS_DEBUG_MTU` | image | `1236` | Tunnel MTU. Railway's network interface has a 1316-byte MTU, and a full Tailscale packet is 1280 plus 80 bytes of WireGuard overhead, so larger packets were lost: TLS handshakes took 0.6–1.7 s and transfers ran near 10 KB/s. 1236 = 1316 − 80. Measured after the change (previous layout): 65–75 ms handshakes, a 20 KB page in 0.25 s. *Not yet re-measured on Railway with Tailscale in this container.* This is a debug knob in Tailscale, so re-check it when upgrading Tailscale. |

@@ -16,8 +16,10 @@ reachable only through Tailscale.
   only on loopback, Serve publishes it at `https://openclaw.<tailnet>.ts.net`,
   and browsers on your tailnet sign in with their Tailscale identity. Nothing
   else in the Railway project can reach it.
-- **One service, one variable.** The template asks only for a Tailscale auth
-  key; the Gateway token is generated.
+- **One service, two variables.** The template asks for a name for the Gateway
+  and a Tailscale auth key; the Gateway token is generated. The name becomes
+  the tailnet address (`My Gateway` → `https://my-gateway.<tailnet>.ts.net`),
+  so a second deployment gets its own name instead of `openclaw-1`.
 - **All state on one volume** at `/data`: OpenClaw's state in `/data/.openclaw`
   (migrated by OpenClaw's own Doctor on every start), Tailscale's node state,
   the home directory, and Homebrew, so the machine identity, tool logins, and

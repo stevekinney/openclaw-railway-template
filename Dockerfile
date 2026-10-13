@@ -135,15 +135,16 @@ COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscaled /usr/lo
 
 # The Gateway's name in OpenClaw's machine picker. OpenClaw 2026.9.8 falls back
 # to the container hostname, which Railway changes on every deploy; this patch
-# reads OPENCLAW_MACHINE_DISPLAY_NAME first. The entrypoint defaults it to the
-# Tailscale machine name; set it as a Railway variable to choose another.
+# reads OPENCLAW_MACHINE_DISPLAY_NAME first. The template asks for it, and the
+# entrypoint derives the Tailscale machine name from it (tailscale-hostname.mjs);
+# without it, both are openclaw.
 # Keep this patch in .dockerignore's build-context allowlist.
 COPY scripts/patch-machine-display-name.mjs /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 RUN node /usr/local/lib/openclaw-railway/patch-machine-display-name.mjs
 
 COPY config/openclaw.seed.json /etc/openclaw-railway/openclaw.seed.json
 COPY scripts/entrypoint.sh /usr/local/bin/openclaw-railway-entrypoint
-COPY scripts/sidecar.mjs scripts/webhook-relay.mjs /usr/local/lib/openclaw-railway/
+COPY scripts/sidecar.mjs scripts/webhook-relay.mjs scripts/tailscale-hostname.mjs /usr/local/lib/openclaw-railway/
 # `railway ssh` opens a root shell. `as-node <command>` runs a command as the
 # Gateway's user, so tool logins (for example `as-node gog auth add …`) don't
 # leave root-owned files the agent can't read. The openclaw and brew wrappers in
@@ -155,7 +156,7 @@ COPY scripts/brew-as-node.sh /usr/local/sbin/brew
 # a 127.0.0.1 redirect. See documentation/TOOLS.md.
 COPY scripts/gog-login.sh /usr/local/bin/gog-login
 
-RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs /usr/local/lib/openclaw-railway/webhook-relay.mjs \
+RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-railway/sidecar.mjs /usr/local/lib/openclaw-railway/webhook-relay.mjs /usr/local/lib/openclaw-railway/tailscale-hostname.mjs \
  && chmod 0555 /usr/local/bin/openclaw-railway-entrypoint /usr/local/bin/as-node /usr/local/bin/gog-login /usr/local/sbin/openclaw /usr/local/sbin/brew \
  && node /app/openclaw.mjs --version \
  && tailscale version
@@ -189,7 +190,6 @@ ENV HOME=/data/home \
 # capped transfers near 10 KB/s. 1236 = 1316 - 80, so tunnel packets fit.
 ENV TS_STATE_DIR=/data/tailscale \
     TS_SOCKET=/var/run/tailscale/tailscaled.sock \
-    TS_HOSTNAME=openclaw \
     TS_DEBUG_MTU=1236
 
 # Replaces the base image's HEALTHCHECK, which would run OpenClaw code as root.

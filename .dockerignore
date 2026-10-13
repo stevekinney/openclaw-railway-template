@@ -8,6 +8,7 @@
 !scripts/brew-as-node.sh
 !scripts/sidecar.mjs
 !scripts/webhook-relay.mjs
+!scripts/tailscale-hostname.mjs
 !scripts/gog-login.sh
 !tools/package.json
 !tools/package-lock.json

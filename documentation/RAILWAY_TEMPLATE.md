@@ -6,17 +6,18 @@ OpenClaw Private Gateway runs your own [OpenClaw](https://openclaw.ai) Gateway o
 
 This template starts one service with one volume. The **openclaw** service runs the official OpenClaw image (a pinned release) with Tailscale inside the same container:
 
-- The Gateway listens only on localhost. OpenClaw itself runs Tailscale Serve, so it appears in your tailnet as `openclaw` at `https://openclaw.your-tailnet.ts.net`, and pairing codes and the dashboard origin follow automatically.
+- The Gateway listens only on localhost. OpenClaw itself runs Tailscale Serve, so it appears in your tailnet under the name you give it: `Work Gateway` becomes `https://work-gateway.your-tailnet.ts.net`, and pairing codes and the dashboard origin follow automatically.
 - On your tailnet, the dashboard signs you in with your Tailscale identity. Token authentication still protects everything else, and each device that runs the macOS app or a node is approved by hand.
 - All state (OpenClaw's config, sessions, and credentials, plus Tailscale's identity and tool logins) lives on a volume at `/data`.
 
-Before you deploy, turn on **MagicDNS** and **HTTPS certificates** in the Tailscale admin console and generate an auth key (not reusable, not ephemeral). The template asks for one value:
+Before you deploy, turn on **MagicDNS** and **HTTPS certificates** in the Tailscale admin console and generate an auth key (not reusable, not ephemeral). The template asks for two values:
 
 | Variable | Value |
 | --- | --- |
+| `OPENCLAW_MACHINE_DISPLAY_NAME` | a name for this Gateway, such as `Work Gateway`; it is lowercased and hyphenated for the tailnet address |
 | `TS_AUTHKEY` | your Tailscale auth key, used once on first boot |
 
-`OPENCLAW_GATEWAY_TOKEN` is generated for you. After deploying, add your model provider, open the dashboard at `https://openclaw.your-tailnet.ts.net/`, and pair the macOS app. If your tailnet already has a machine named `openclaw`, Tailscale names this one `openclaw-1` and the address follows (`https://openclaw-1.your-tailnet.ts.net/`); the admin console's Machines page shows the name it got. The [Quickstart](https://github.com/stevekinney/openclaw-railway-template/blob/main/documentation/QUICKSTART.md) has every command.
+`OPENCLAW_GATEWAY_TOKEN` is generated for you. After deploying, add your model provider, open the dashboard at `https://work-gateway.your-tailnet.ts.net/` (with your Gateway's name), and pair the macOS app. Give each deployment its own name: if your tailnet already has a machine with that name, Tailscale adds a suffix (`work-gateway-1`) and the address follows; the deploy log and the admin console's Machines page show the name it got. The [Quickstart](https://github.com/stevekinney/openclaw-railway-template/blob/main/documentation/QUICKSTART.md) has every command.
 
 ## Common Use Cases
 

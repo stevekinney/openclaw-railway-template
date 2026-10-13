@@ -31,9 +31,18 @@ if [ "${PORT:-8080}" = "$OPENCLAW_GATEWAY_PORT" ]; then
   fail "PORT is ${PORT:-8080}, the Gateway's own loopback port. Delete the PORT variable (Railway then uses 8080 for the health check relay)."
 fi
 
+# The Tailscale machine name, which names the address
+# https://<machine name>.<tailnet>.ts.net: TS_HOSTNAME if set, otherwise the
+# display name, otherwise openclaw, made into a valid DNS label
+# ("My Gateway" -> my-gateway). It is used when Tailscale logs in; renaming an
+# existing machine is done in the Tailscale admin console.
+requested_hostname="${TS_HOSTNAME:-${OPENCLAW_MACHINE_DISPLAY_NAME:-openclaw}}"
+TS_HOSTNAME="$(node /usr/local/lib/openclaw-railway/tailscale-hostname.mjs "$requested_hostname")" || TS_HOSTNAME=""
+export TS_HOSTNAME
+
 # The name shown in OpenClaw's machine picker (see the Dockerfile's display-name
 # patch): the Tailscale machine name unless set explicitly.
-export OPENCLAW_MACHINE_DISPLAY_NAME="${OPENCLAW_MACHINE_DISPLAY_NAME:-$TS_HOSTNAME}"
+export OPENCLAW_MACHINE_DISPLAY_NAME="${OPENCLAW_MACHINE_DISPLAY_NAME:-${TS_HOSTNAME:-openclaw}}"
 
 # For this repository's integration tests only: run without Tailscale, so CI
 # can exercise the Gateway with no tailnet. The Gateway is then unreachable
@@ -123,6 +132,10 @@ if [ -z "$without_tailscale" ]; then
   # the tailnet. Afterwards the node key on the volume logs Tailscale in.
   if [ "$state" != Running ]; then
     [ -n "${TS_AUTHKEY:-}" ] || fail "Tailscale is not logged in (state: $state) and TS_AUTHKEY is not set. Generate an auth key in the Tailscale admin console (Settings > Keys) and set it as TS_AUTHKEY on this service."
+    [ -n "$TS_HOSTNAME" ] || fail "\"$requested_hostname\" has no letters or digits to make a Tailscale machine name from. Change OPENCLAW_MACHINE_DISPLAY_NAME, or set TS_HOSTNAME (for example TS_HOSTNAME=openclaw)."
+    if [ "$TS_HOSTNAME" != "$requested_hostname" ]; then
+      echo "openclaw-railway: Tailscale machine name $TS_HOSTNAME, from \"$requested_hostname\""
+    fi
     # Pass the key in a file, not on the command line, where `ps` would show it.
     key_file="$(mktemp)"
     printf '%s' "$TS_AUTHKEY" > "$key_file"

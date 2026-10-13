@@ -64,8 +64,9 @@ export default defineRailway(() => {
       // Used once, to log the container in to your tailnet on first boot.
       TS_AUTHKEY: preserve(),
       ANTHROPIC_API_KEY: preserve(),
-      // Optional: the Gateway's name in OpenClaw's machine picker (default: the
-      // Tailscale machine name, openclaw).
+      // The Gateway's name in OpenClaw's machine picker. The Tailscale machine
+      // name, and so the tailnet address, is derived from it at first login
+      // ("My Gateway" -> my-gateway); without it, both are openclaw.
       OPENCLAW_MACHINE_DISPLAY_NAME: preserve(),
       // Password for gog's token file; see documentation/TOOLS.md.
       GOG_KEYRING_PASSWORD: preserve(),
