@@ -92,9 +92,14 @@ Nothing needs a `127.0.0.1` redirect or a pasted URL.
 `.ts.net:8443` redirect URI and shows its account chooser; on a test node, a
 callback sent over the tailnet reached `gog`, which rejected a forged `state`,
 and the route was gone once `gog-login` exited (the live test tier repeats
-this). Completing consent and the token exchange is the standard `gog` flow and
-was not repeated in tests. The browser must be on the tailnet and allowed to
-reach the machine on port 8443.
+this). On production (2026-10-13), consent completed end to end: `gog` exchanged
+the code and stored a refresh token for the `web` client, which
+`gog auth list --check` reports as valid. The browser must be on the tailnet and
+allowed to reach the machine on port 8443.
+
+`gog-login` accepts exactly one callback. If an old callback tab from an earlier
+attempt reloads first, `gog` fails with `state mismatch` and exits. Close stale
+callback tabs, rerun `gog-login`, and open the new URL once.
 
 Never paste the client secret or tokens into a chat with the agent.
 

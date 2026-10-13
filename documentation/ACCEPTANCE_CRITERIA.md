@@ -102,7 +102,7 @@ health check through the relay, and the Mac app.
 | Security audit with webhooks | 0 critical, 2 warnings after configuration (`trusted_proxies_missing`; `plugins.tools_reachable_permissive_policy`, about the user's own plugins and `main`'s full tool profile). |
 | Gmail push | Production: the existing `gog-gmail-watch-push` subscription was repointed to the Railway domain; `hooks.gmail` applied without a restart (watch registered, `gog gmail watch serve` on 127.0.0.1:8788); a real new-mail push became a `mail_reader` hook run that completed (`status=ok`, no delivery). Stale and synthetic pushes were ignored by `gog`. |
 | Portals | An agent opened a portal on its own Serve port; over the tailnet it returned the test page (200) with its ticket and 401 without. |
-| `gog-login` on production | Google redirected to `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback` and `gog` received the authorization through the tailnet. |
+| `gog-login` on production | Google redirected to `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, `gog` received the authorization through the tailnet, exchanged the code, and stored a refresh token for the `web` client (`gog auth list --check`: valid; 2026-10-13). The temporary port 8443 route was gone afterwards. |
 | Tailscale Funnel for webhooks | Not used: built and tested, but Funnel ingress never reached a userspace-mode node from this container (the official Tailscale container failed the same way). See [WEBHOOKS.md](WEBHOOKS.md#why-not-tailscale-funnel). |
 
 ## Live history (previous layout, 2026-10-08)
