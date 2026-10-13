@@ -94,7 +94,18 @@ Expected result on a correctly deployed template (checked in
   production deployment it flagged the `acpx` extension (`plugins.code_safety`,
   "Shell command execution detected"), which launches coding agents by design.
   Findings about plugins you installed are yours to review; the template adds
-  none.
+  none. The `acpx` finding was reviewed on 2026-10-13: the plugin is
+  `@openclaw/acpx` from ClawHub's official channel (`openclaw plugins inspect
+  acpx` shows the source, trust, and integrity), and the flagged line is
+  `spawn()` of the configured agent command, without a shell, in its MCP proxy.
+  To keep the finding from masking new ones, suppress only that file and record
+  why, rather than the whole check:
+
+  ```bash
+  openclaw config set security.audit.suppressions '[{"checkId":"plugins.code_safety","titleIncludes":"\"acpx\"","detailIncludes":"dist/mcp-proxy.mjs","reason":"Official @openclaw/acpx; spawns the configured ACP agent without a shell. Reviewed 2026-10-13."}]' --strict-json
+  ```
+
+  Review it again after updating the plugin.
 - **With webhooks on and a restricted reader** ([WEBHOOKS.md](WEBHOOKS.md)): no
   new findings, provided `hooks.allowRequestSessionKey` stays `false`,
   `hooks.defaultSessionKey` is set, and cross-agent session access is off
