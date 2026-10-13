@@ -17,8 +17,9 @@ calls the Gateway `health` RPC).
 | Then | one-time device pairing approval on the Gateway |
 
 There is no plaintext port: the Gateway listens only on loopback inside the
-container, and Serve is the only way in. If the machine is `openclaw-1` (the
-name was taken), use that name instead.
+container, and Serve is the only way in. Use your machine's name in place of
+`openclaw`: it comes from the name you gave the Gateway (`My Gateway` →
+`my-gateway`), and the deploy log's `the Gateway will be at` line shows it.
 
 TLS on 443 uses the tailnet's publicly trusted certificate, so the app trusts it
 through normal macOS trust and records a first-use pin. For `*.ts.net` Serve

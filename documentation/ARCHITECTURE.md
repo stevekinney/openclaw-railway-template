@@ -249,10 +249,11 @@ gate would fail every deploy until the channel was fixed.
 ## Tailscale in the container
 
 - **Identity persists** on the volume (`TS_STATE_DIR=/data/tailscale`):
-  redeploys keep the same node and MagicDNS name. `TS_HOSTNAME=openclaw` sets the
-  name on first login; if your tailnet already has a machine named `openclaw`,
-  Tailscale names this one `openclaw-1`. Nothing in the template depends on the
-  name.
+  redeploys keep the same node and MagicDNS name. The name requested on first
+  login is derived from the Gateway's display name (`My Gateway` → `my-gateway`,
+  by `scripts/tailscale-hostname.mjs`; `openclaw` without one), so two
+  deployments with different names don't collide. If the name is taken anyway,
+  Tailscale appends `-1`. Nothing in the template depends on the name.
 - **HTTPS certificates must be enabled** for the tailnet. There is no plaintext
   fallback port. The first HTTPS request after a node's first login took ≈15.6 s
   while Tailscale issued the certificate (locally); later requests ≈16 ms. The

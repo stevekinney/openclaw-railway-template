@@ -33,6 +33,7 @@ watchdog="$run_id-watchdog"
 live="$run_id-live"
 live_twin="$run_id-live-twin"
 live_hostname="openclaw-test-$$"
+live_display_name="OpenClaw Test $$"
 failures=0
 
 log() { printf '\n== %s\n' "$*"; }
@@ -207,6 +208,8 @@ expect_refusal "refuses to start when Tailscale isn't logged in and TS_AUTHKEY i
 expect_refusal "reports a rejected auth key without printing it" "Tailscale login failed" \
   -e OPENCLAW_GATEWAY_TOKEN="$token" -e TS_AUTHKEY=tskey-auth-invalid-for-tests
 check "the rejected auth key does not appear in the output" '! printf "%s" "$output" | grep -F tskey-auth-invalid-for-tests'
+expect_refusal "refuses a display name with no letters or digits for the machine name, before logging in" "has no letters or digits" \
+  -e OPENCLAW_GATEWAY_TOKEN="$token" -e TS_AUTHKEY=tskey-auth-invalid-for-tests -e OPENCLAW_MACHINE_DISPLAY_NAME=🦞
 # A volume from the previous layout: a LAN-bound Gateway behind a separate
 # Tailscale service, with gateway.publicOrigin and a device-pair publicUrl.
 docker run --rm -v "$run_id-old-state:/data" --entrypoint sh "$image" -c '
@@ -347,6 +350,10 @@ check "HOME is on the volume for the Gateway" \
   'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x HOME=/data/home'
 check "the machine display name defaults to the Tailscale machine name" \
   'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x OPENCLAW_MACHINE_DISPLAY_NAME=openclaw'
+check "the Tailscale machine name defaults to openclaw" \
+  'docker exec "$gateway" as-node sh -c "tr \"\\0\" \"\\n\" < /proc/1/environ" | grep -x TS_HOSTNAME=openclaw'
+check "the image turns a display name into a machine name (My Gateway -> my-gateway)" \
+  '[ "$(docker exec "$gateway" node /usr/local/lib/openclaw-railway/tailscale-hostname.mjs "My Gateway")" = my-gateway ]'
 check "the display-name patch is applied to OpenClaw's machine-name fallback" \
   'docker exec "$gateway" sh -c "grep -l OPENCLAW_MACHINE_DISPLAY_NAME /app/dist/machine-name-*.mjs"'
 check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /data/home ]'
@@ -406,12 +413,14 @@ check "the container stops when tailscaled dies, so Railway restarts both" \
 if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   log "live: Tailscale Serve on a real tailnet"
   docker run -d --name "$live" -v "$run_id-live-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
-    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$live_hostname" "$image" >/dev/null
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e OPENCLAW_MACHINE_DISPLAY_NAME="$live_display_name" "$image" >/dev/null
   attempt=0
   until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 90 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
+  check "the machine name comes from the display name ($live_display_name -> $live_hostname)" \
+    'docker logs "$live" 2>&1 | grep -F "Tailscale machine name $live_hostname, from \"$live_display_name\""'
   check "the container logs in to the tailnet with TS_AUTHKEY" \
     'docker logs "$live" 2>&1 | grep -F "logged in to Tailscale as $live_hostname"'
   check "Tailscale is running" '[ "$(tailscale_field "$live" BackendState)" = Running ]'
@@ -449,9 +458,10 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     check "the temporary :8443 route ends with gog-login" \
       '[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://$live_name:8443/oauth2/callback")" = 000 ]'
   fi
-  # A second machine asking for the same name, in capitals, gets a normalized,
-  # suffixed name from Tailscale. The entrypoint must report the name it got and
-  # the one it asked for, without claiming why they differ.
+  # A second machine asking for the same name (TS_HOSTNAME, in capitals, which
+  # the entrypoint lowercases) gets a suffixed name from Tailscale. The
+  # entrypoint must report the name it got and the one it asked for, without
+  # claiming why they differ.
   twin_requested="$(printf '%s' "$live_hostname" | tr '[:lower:]' '[:upper:]')"
   docker run -d --name "$live_twin" -v "$run_id-live-twin-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
     -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$twin_requested" "$image" >/dev/null
@@ -462,8 +472,8 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   done
   twin_name="$(tailscale_field "$live_twin" DNSName 2>/dev/null || true)"
   twin_machine="${twin_name%%.*}"
-  check "a taken, capitalized hostname is reported as the name Tailscale assigned ($twin_machine)" \
-    '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine (asked for $twin_requested)" && ! docker logs "$live_twin" 2>&1 | grep -F "already taken"'
+  check "a taken hostname is reported as the name Tailscale assigned ($twin_machine)" \
+    '[ "$twin_machine" != "$live_hostname" ] && [ -n "$twin_machine" ] && docker logs "$live_twin" 2>&1 | grep -F "logged in to Tailscale as $twin_machine (asked for $live_hostname)" && ! docker logs "$live_twin" 2>&1 | grep -F "already taken"'
   check "the suffixed machine logs its own address and serves there" \
     'docker logs "$live_twin" 2>&1 | grep -F "the Gateway will be at https://$twin_name/" && docker logs "$live_twin" 2>&1 | grep -F "serve enabled: https://$twin_name/"'
   docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true

@@ -2,7 +2,7 @@
 
 Two ways to deploy:
 
-- **Railway template**: one click plus one variable. Follow
+- **Railway template**: one click plus two variables. Follow
   [QUICKSTART.md](QUICKSTART.md). Use this unless you need to change the code.
 - **From your fork, with Infrastructure as Code**: this page. Use it when you
   maintain your own fork (`.railway/railway.ts` then describes the project).
@@ -104,6 +104,15 @@ security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n'
 and save the printed value in a password manager.) Seal the token in the
 dashboard (Variables → ⋯ → Seal) if you don't need to read it back.
 
+Name the Gateway. The name is shown in OpenClaw's apps, and its lowercase,
+hyphenated form names the Tailscale machine and the address (`My Gateway` →
+`https://my-gateway.<your-tailnet>.ts.net/`). Without it, both are `openclaw`;
+this page uses `openclaw` in its examples.
+
+```bash
+railway variable set 'OPENCLAW_MACHINE_DISPLAY_NAME=My Gateway' --service openclaw --skip-deploys
+```
+
 Then create an auth key in the Tailscale admin console (**Settings → Keys →
 Generate auth key**: not reusable, not ephemeral, 1-day expiry, tagged
 `tag:openclaw` if your policy defines it; see [TAILSCALE.md](TAILSCALE.md)),
@@ -129,15 +138,15 @@ Expect, in order:
 
 Railway marks the deploy healthy once `/startupz` returns 200 through the health
 relay (≈3 minutes the first time, mostly pulling the base image). A machine
-named `openclaw` is now in your tailnet. If the tailnet already had one, Tailscale names this machine `openclaw-1`, the login line says `logged in to Tailscale as openclaw-1 (asked for openclaw)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
+named after the Gateway is now in your tailnet. If the tailnet already had one with that name, Tailscale adds a suffix (`openclaw-1`), the login line says `logged in to Tailscale as openclaw-1 (asked for openclaw)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
 
 ```bash
 curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}
 ```
 
 The first HTTPS request to a new machine takes about 15 seconds while Tailscale
-issues its certificate. If the name `openclaw` was already taken, the machine is
-`openclaw-1` and the address follows; OpenClaw picks up the real name itself.
+issues its certificate. If the name was already taken, the machine has a `-1`
+suffix and the address follows; OpenClaw picks up the real name itself.
 **(live-unverified** on Railway in this layout.)
 
 ## 4. Choose an AI provider
@@ -319,8 +328,9 @@ keeps service names, sources, health-check paths, restart policy, volume mount
 paths, and template *functions* such as `${{secret(64, "abcdef0123456789")}}`.
 It **drops literal variable values**, marks every variable required, and drops
 variable descriptions. That is why the service takes no `PORT` variable and
-relies on Railway's default. The template asks only for `TS_AUTHKEY`; it
-generates `OPENCLAW_GATEWAY_TOKEN`.
+relies on Railway's default. The template asks for
+`OPENCLAW_MACHINE_DISPLAY_NAME` (no default, so each deployment gets its own
+machine name) and `TS_AUTHKEY`; it generates `OPENCLAW_GATEWAY_TOKEN`.
 
 **The template's readme** (the text on the template page) lives in [RAILWAY_TEMPLATE.md](RAILWAY_TEMPLATE.md). Railway strips anything that looks like an HTML tag when it saves the readme, even inside backticks, so write placeholders as `your-tailnet`, never `<tailnet>`; `npm run test:railway-config` checks this. To publish a change to the readme, run from the repository root:
 
@@ -344,13 +354,13 @@ template in place**, even when it is published, and the published template's
 original source project no longer exists. So:
 
 1. In a scratch project whose service mirrors `.railway/railway.ts`, set
-   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and a
-   placeholder value for `TS_AUTHKEY`.
+   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and
+   placeholder values for `OPENCLAW_MACHINE_DISPLAY_NAME` and `TS_AUTHKEY`.
 2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
 3. Inspect `serializedConfig`: no secret values, one service, one volume at `/data`.
 4. Deploy it into another scratch project
    (`railway deploy -t <code> -v openclaw.TS_AUTHKEY=…`, with a reusable,
    ephemeral key) and wait for `openclaw` to turn healthy.
-5. Publish the new template (a new URL), add the variable description for
-   `TS_AUTHKEY` in the template editor, point the README's Deploy button at it,
+5. Publish the new template (a new URL), add the variable descriptions for
+   `OPENCLAW_MACHINE_DISPLAY_NAME` and `TS_AUTHKEY` in the template editor, point the README's Deploy button at it,
    and unpublish the old one.

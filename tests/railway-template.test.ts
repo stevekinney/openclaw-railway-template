@@ -20,6 +20,7 @@ test("publishes no address left empty by a stripped placeholder", () => {
   assert.doesNotMatch(published, /\.\.ts\.net|\/\/\.ts\.net/);
 });
 
-test("names the only variable the template asks for", () => {
+test("names both variables the template asks for", () => {
+  assert.match(readme, /`OPENCLAW_MACHINE_DISPLAY_NAME`/);
   assert.match(readme, /`TS_AUTHKEY`/);
 });

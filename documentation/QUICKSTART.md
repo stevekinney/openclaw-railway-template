@@ -22,33 +22,40 @@ machines never expire and get only the access your policy grants them.
 
 Open the [OpenClaw Private Gateway template](https://railway.com/deploy/openclaw-private-gateway)
 (or click **Deploy on Railway** in the [README](../README.md)) and fill in the
-one variable it asks for:
+two variables it asks for:
 
 | Variable | Value |
 | --- | --- |
+| `OPENCLAW_MACHINE_DISPLAY_NAME` | a name for this Gateway, for example `Gowanus` or `Work Gateway` |
 | `TS_AUTHKEY` | the key from step 1 |
 
-<img src="images/template-variable.png" width="880" alt="The template page's Template Content panel: one openclaw service from stevekinney/openclaw-railway-template, with one required variable, TS_AUTHKEY.">
+The name is shown as typed in OpenClaw's apps, and its lowercase, hyphenated
+form names the machine on your tailnet: `Work Gateway` becomes
+`https://work-gateway.<your-tailnet>.ts.net/`. Give each deployment its own
+name.
+
+<img src="images/template-variable.png" width="880" alt="The template page's Template Content panel: one openclaw service from stevekinney/openclaw-railway-template, with two required variables, OPENCLAW_MACHINE_DISPLAY_NAME and TS_AUTHKEY.">
 
 The template generates the Gateway token (`OPENCLAW_GATEWAY_TOKEN`). Wait for
 the `openclaw` service to turn green (≈4 minutes; the first build pulls a large
 image). On first boot the container logs in to your tailnet with the key, and a
-machine named `openclaw` appears. After that, the node key on the volume logs
-it in; the auth key is never used again.
+machine named after the Gateway (`work-gateway`) appears. After that, the node
+key on the volume logs it in; the auth key is never used again.
 
-The Gateway is then at `https://openclaw.<your-tailnet>.ts.net/`. The first
-request takes about 15 seconds while Tailscale issues the certificate. If the
-name `openclaw` was already taken, the machine is `openclaw-1` and the address
-follows (`https://openclaw-1.<your-tailnet>.ts.net/`); nothing needs editing. To
-get the plain name back, remove the stale machine and rename this one in the
-admin console.
-
-The deploy log names the address either way:
+The deploy log names the address:
 
 ```
-openclaw-railway: logged in to Tailscale as openclaw-1 (asked for openclaw)
-openclaw-railway: the Gateway will be at https://openclaw-1.<your-tailnet>.ts.net/
+openclaw-railway: Tailscale machine name work-gateway, from "Work Gateway"
+openclaw-railway: logged in to Tailscale as work-gateway
+openclaw-railway: the Gateway will be at https://work-gateway.<your-tailnet>.ts.net/
 ```
+
+The first request takes about 15 seconds while Tailscale issues the
+certificate. If the tailnet already had a machine with that name, Tailscale
+adds a suffix (`work-gateway-1`, and the log says `asked for work-gateway`); the
+address follows and nothing needs editing. To get the plain name back, remove
+the stale machine and rename this one in the admin console. The rest of this
+guide writes the machine name as `openclaw`; use yours.
 
 ## 3. Link the CLI and open SSH
 

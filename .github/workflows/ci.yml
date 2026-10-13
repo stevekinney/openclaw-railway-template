@@ -23,10 +23,12 @@ jobs:
         run: npm run typecheck
       - name: Evaluate Railway configuration
         run: npm run test:railway-config
+      - name: Test the machine-name rule
+        run: npm run test:scripts
       - name: Validate JSON configuration
         run: jq empty config/openclaw.seed.json
       - name: Check sidecar scripts parse
-        run: node --check scripts/sidecar.mjs && node --check scripts/webhook-relay.mjs
+        run: node --check scripts/sidecar.mjs && node --check scripts/webhook-relay.mjs && node --check scripts/tailscale-hostname.mjs
       - name: ShellCheck
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \

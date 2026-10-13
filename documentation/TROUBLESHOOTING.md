@@ -82,7 +82,9 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Machine is `openclaw-1`, not `openclaw` | The name was already taken. Everything follows the real name (Serve, origin, QR); only clients you configured by hand still point at `openclaw`. | Remove the stale machine and rename this one to `openclaw` in the admin console, or point clients at `openclaw-1`. `railway ssh --service openclaw -- tailscale status --json` shows the name (`Self.DNSName`). |
+| Machine has a `-1` suffix (`my-gateway-1`) | The name was already taken, usually by an earlier deployment with the same Gateway name. Everything follows the real name (Serve, origin, QR); only clients you configured by hand still point at the old one. | Remove the stale machine and rename this one in the admin console, or point clients at the suffixed name. `railway ssh --service openclaw -- tailscale status --json` shows the name (`Self.DNSName`). |
+| Deploy stops with `has no letters or digits to make a Tailscale machine name from` | The Gateway's name (`OPENCLAW_MACHINE_DISPLAY_NAME`) is only symbols, emoji, or non-Latin script, so no DNS label can be made from it. | Add letters or digits to the name, or keep it and set `TS_HOSTNAME` (for example `openclaw`). |
+| Changed `OPENCLAW_MACHINE_DISPLAY_NAME`, but the address stayed the same | The machine name is chosen only when Tailscale logs in (first boot). | Rename the machine in the Tailscale admin console, then restart the service so OpenClaw picks up the new address. |
 | `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the machine is offline. | Check the policy grant and `tailscale ping openclaw`. |
 | The first HTTPS request takes ~15 s | A new machine's certificate is being issued. | Nothing; later requests are fast. |
 | HTTPS never works and the Gateway fails to start Serve | Tailnet HTTPS certificates are not enabled. There is no plaintext fallback. | Admin console → DNS → HTTPS Certificates, then redeploy. |
