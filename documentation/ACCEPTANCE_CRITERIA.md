@@ -16,7 +16,7 @@ The original brief asked for "Tailscale private access via a separate service".
 On 2026-10-08 the owner approved replacing that with `tailscaled` inside the
 `openclaw` container and OpenClaw-managed Serve (`gateway.tailscale.mode: serve`,
 loopback-only Gateway). Reasons: OpenClaw's supported setup, a template that
-asks only for a Tailscale auth key (no hand-entered tailnet address, no
+asks only for a name and a Tailscale auth key (no hand-entered tailnet address, no
 `openclaw-1` mismatch), tailnet identity sign-in, and a Gateway nothing else in
 the Railway project can reach. Costs: a second long-running process and a
 probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
@@ -25,20 +25,23 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
 
 ## Local tests
 
-- `sh tests/image.test.sh`: core tier, **88 checks** in a full run, no tailnet
+- `sh tests/image.test.sh`: core tier, **91 checks** in a full run, no tailnet
   needed. It covers the relay's 404 matrix and the Gateway port being
   unreachable from the network, loopback authentication and proxy attribution,
   the webhook routes (token in header or path, refusals, 413, per-caller
   lockout, off unless opted in), the entrypoint's refusals (missing or rejected
-  auth key, old-layout config, `PORT` collision, `hooks.gmail.tailscale.mode`),
+  auth key, old-layout config, `PORT` collision, `hooks.gmail.tailscale.mode`,
+  a display name with no letters or digits), the default machine name,
   the `tailscaled` watchdog, persistence, ownership repair, and crash handling.
 - The same script's **live tier** runs when `TAILSCALE_TEST_AUTHKEY` is set (a
   reusable, ephemeral key): real login, Serve URL, QR address, key hygiene,
-  restart reuse, watchdog, the logged tailnet address (on every boot, and the name Tailscale assigned when a second machine asks for a taken hostname in capitals), and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
-  dashboard over the tailnet and `gog-login`'s callback route: 17 checks. All
-  105 passed on 2026-10-08. CI passes the key from an optional repository
+  restart reuse, watchdog, the machine name derived from the display name
+  (`OpenClaw Test 29388` → `openclaw-test-29388`), the logged tailnet address (on every boot, and the name Tailscale assigned when a second machine asks for a taken hostname), and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
+  dashboard over the tailnet and `gog-login`'s callback route: 18 checks. All
+  109 passed on 2026-10-13. CI passes the key from an optional repository
   secret.
-- `npm run test:railway-config` (5 tests), `npm run typecheck`, ShellCheck,
+- `npm run test:railway-config` (8 tests), `npm run test:scripts` (13 tests of
+  the machine-name rule), `npm run typecheck`, ShellCheck,
   Hadolint, and actionlint.
 
 Remote-peer device-pairing tests were removed with the layout change: there is
