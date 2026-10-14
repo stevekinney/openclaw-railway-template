@@ -35,6 +35,8 @@ live_twin="$run_id-live-twin"
 live_hostname="openclaw-test-$$"
 live_display_name="OpenClaw Test $$"
 failures=0
+# check() silences its condition; diagnostics meant for a failure go to fd 3.
+exec 3>&2
 
 log() { printf '\n== %s\n' "$*"; }
 pass() { printf '  ok   %s\n' "$*"; }
@@ -133,7 +135,7 @@ wait_for_startup() {
     attempt=$((attempt + 1))
     sleep 2
   done
-  docker logs "$gateway" 2>&1 | tail -30
+  docker logs "$gateway" 2>&1 | tail -40 | sed 's/^/       | /' >&3
   return 1
 }
 
