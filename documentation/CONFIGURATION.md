@@ -10,10 +10,10 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 | Setting | Where | Value |
 | --- | --- | --- |
 | OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
-| `HOME` | `Dockerfile` | `/data/home`, on the volume, so tool logins and settings under `~` persist. See [TOOLS.md](TOOLS.md). |
+| `HOME` | `scripts/as-node.sh` | `/data/home`, on the volume, for the Gateway and `as-node` commands, so tool logins and settings under `~` persist. A root shell's `HOME` is `/root`. See [TOOLS.md](TOOLS.md). |
 | Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux`, ImageMagick as a pinned baseline; see [TOOLS.md](TOOLS.md). |
 | Homebrew | `Dockerfile` (seed), `/data/linuxbrew` | Homebrew 7.0.8 seeded onto the volume on first boot, then self-updating. `/home/linuxbrew/.linuxbrew` is a symlink to it. |
-| `PATH`, `NPM_CONFIG_PREFIX` | `Dockerfile` | `openclaw`/`brew` wrappers, then `~/.local/bin`, then Homebrew, then the image. `npm install -g` writes to `~/.local` on the volume. |
+| `PATH`, `NPM_CONFIG_PREFIX` | `scripts/as-node.sh` | For the Gateway and `as-node` commands: `openclaw`/`brew` wrappers, then `~/.local/bin`, then Homebrew, then the image; `npm install -g` writes to `~/.local` on the volume. A root shell's `PATH` (the `Dockerfile`'s) has no directory on the volume. |
 | GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |
 | Tailscale version | `Dockerfile` `FROM … AS tailscale` line | `tailscale/tailscale:v1.102.5@sha256:c507…`; only the `tailscale` and `tailscaled` binaries are copied in |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
@@ -95,7 +95,7 @@ is under `/data/.openclaw` (observed layout after onboarding):
 OAuth tokens (for OAuth-based providers) are stored in SQLite on this volume in
 plaintext. Treat the volume and its backups as credentials.
 
-`HOME` is `/data/home` and Homebrew is `/data/linuxbrew`, both on the volume, so
+The Gateway's `HOME` is `/data/home` and Homebrew is `/data/linuxbrew`, both on the volume, so
 command-line tools keep their logins, settings, and updates across redeploys.
 Tailscale's state (node key, certificates) is `/data/tailscale`, so the machine
 keeps its name and address across redeploys. Not persisted: `/tmp`, including

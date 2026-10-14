@@ -53,7 +53,7 @@ cleanup() {
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
   docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
   docker rm -f "$gateway" "$watchdog" "$live" "$live_twin" >/dev/null 2>&1 || true
-  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
+  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-link-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -97,6 +97,20 @@ remote_status() {
     fetch(url, { method, headers, signal: AbortSignal.timeout(5000) })
       .then((response) => console.log(response.status), () => console.log("unreachable"));
   ' "${METHOD:-GET}" "http://$(container_address "$gateway"):${PORT:-8080}$path" "$@"
+}
+
+# Sends a raw HTTP request (the first argument, with \r\n line ends) to the
+# relay on PORT from another container and prints the response's status code,
+# or "closed" if the connection ends without one. For requests fetch() refuses
+# to make, such as a request line of //.
+raw_relay_status() {
+  docker run --rm --network "$network" --entrypoint node "$image" -e '
+    const request = process.argv[1].replaceAll("\\r\\n", "\r\n");
+    const socket = require("node:net").connect(8080, process.argv[2], () => socket.end(request));
+    let response = "";
+    socket.on("data", (chunk) => (response += chunk)).on("close", () => console.log(/^HTTP\/1\.1 (\d{3})/.exec(response)?.[1] ?? "closed"));
+    socket.on("error", () => {});
+  ' "$1" "$(container_address "$gateway")"
 }
 
 # Prints the status of a request to the Gateway's own loopback listener, made
@@ -162,9 +176,9 @@ check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($p
 
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
-  'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
+  'docker run --rm --entrypoint as-node "$image" gh --version | grep -E "^gh version [0-9]"'
 for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version" "command -v gog-login"; do
-  check "$tool_check runs as node" 'docker run --rm --user node --entrypoint sh "$image" -c "$tool_check"'
+  check "$tool_check runs as node" 'docker run --rm --entrypoint as-node "$image" sh -c "$tool_check"'
 done
 # OpenClaw's image processor (Rastermill) can't decode HEIC itself and falls
 # back to ImageMagick. tests/fixtures/gradient.heic is a generated 64x64 image.
@@ -231,12 +245,30 @@ docker run --rm -v "$run_id-gmail-state:/data" --entrypoint sh "$image" -c '
     require(\"node:fs\").writeFileSync(\"/data/.openclaw/openclaw.json\", JSON.stringify(config));"' >/dev/null
 expect_refusal "refuses hooks.gmail.tailscale.mode funnel, which would publish port 443" "hooks.gmail.tailscale.mode is funnel" \
   -v "$run_id-gmail-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
+# node owns /data and could swap a state directory for a link to a system one.
+docker run --rm -v "$run_id-link-state:/data" --entrypoint ln "$image" -s /usr/local/bin /data/home
+expect_refusal "refuses a state directory replaced with a symbolic link" "/data/home is a symbolic link" \
+  -v "$run_id-link-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 relay_without_opt_in="$(docker run --rm -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_GATEWAY_PORT=18789 --user node --entrypoint sh "$image" -c '
   node /usr/local/lib/openclaw-railway/sidecar.mjs & sleep 2
   node -e "fetch(\"http://127.0.0.1:8080/hooks/x\", { method: \"POST\" }).then((response) => console.log(response.status), () => console.log(\"unreachable\"))"')"
 check "webhook routes are off (404) unless OPENCLAW_RAILWAY_WEBHOOKS is set" '[ "$relay_without_opt_in" = 404 ]'
 
 log "first boot on an empty volume"
+# node, and so the agent, can write to /data/home: npm -g installs to
+# ~/.local/bin. Plant look-alikes of what root runs at boot and in a
+# `railway ssh` shell, each logging its uid and then running the real program,
+# plus a ~/.bashrc and ~/.profile. They must only ever run as node.
+docker run --rm -v "$run_id-state:/data" --entrypoint sh "$image" -c '
+  mkdir -p /data/home/.local/bin
+  for name in openclaw-railway-entrypoint tini node env setpriv id as-node install find chown mountpoint cp ls sh bash; do
+    printf "%s\n" "#!/bin/sh" "echo \"$name \$(/usr/bin/id -u)\" >> /data/planted.log" \
+      "for directory in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do [ -x \"\$directory/$name\" ] && exec \"\$directory/$name\" \"\$@\"; done" \
+      "exit 127" > "/data/home/.local/bin/$name"
+    chmod 755 "/data/home/.local/bin/$name"
+  done
+  for file in .bashrc .profile; do echo "echo \"$file \$(id -u)\" >> /data/planted.log" > "/data/home/$file"; done
+  touch /data/planted.log && chown 1000:1000 /data/planted.log && chmod 666 /data/planted.log'
 start_gateway
 check "/startupz returns 200 through the health relay" 'wait_for_startup'
 check "the baseline config is written on first boot" \
@@ -248,7 +280,9 @@ check "the config binds the Gateway to loopback behind OpenClaw-managed Tailscal
 check "the state directory is owned by node with mode 700" \
   '[ "$(docker exec "$gateway" stat -c "%U %a" /data/.openclaw)" = "node 700" ]'
 check "nothing under /data is owned by root" '[ -z "$(root_owned_state)" ]'
-check "tini is PID 1" 'docker exec "$gateway" ps -o args= -p 1 | grep -E "^tini "'
+check "tini is PID 1" 'docker exec "$gateway" ps -o args= -p 1 | grep -E "^/usr/bin/tini "'
+check "PID 1 runs with no_new_privs and an empty capability bounding set" \
+  'docker exec "$gateway" grep -x "NoNewPrivs:.1" /proc/1/status && docker exec "$gateway" grep -x "CapBnd:.0000000000000000" /proc/1/status'
 check "every container process runs as uid 1000 (node)" \
   '[ -z "$(docker top "$gateway" -eo pid,uid | tail -n +2 | awk "\$2 != 1000")" ]'
 check "the gateway token does not appear in any process arguments" \
@@ -264,6 +298,13 @@ for path in / /control-ui-config.json /v1/models /healthz/../v1/models /%68ealth
   check "the relay refuses $path (404)" '[ "$(remote_status "$path")" = 404 ]'
 done
 check "the relay refuses POST to a probe path (404)" '[ "$(METHOD=POST remote_status /healthz)" = 404 ]'
+for request in "GET // HTTP/1.1" "POST // HTTP/1.1" "GET //x/../ HTTP/1.1"; do
+  check "the relay answers a request line of $request with 400" \
+    '[ "$(raw_relay_status "$request\r\nHost: relay\r\nContent-Length: 0\r\n\r\n")" = 400 ]'
+done
+check "the relay refuses an oversized header (431)" \
+  '[ "$(raw_relay_status "GET /healthz HTTP/1.1\r\nHost: relay\r\nX-Big: $(head -c 20000 /dev/zero | tr "\0" a)\r\n\r\n")" = 431 ]'
+check "the relay is still up after malformed requests" '[ "$(remote_status /healthz)" = 200 ]'
 check "the Gateway's own port is unreachable from the network" '[ "$(PORT=18789 remote_status /healthz)" = unreachable ]'
 
 log "authentication on the loopback listener"
@@ -291,6 +332,22 @@ check "a tool on the volume takes precedence over the image's copy" \
 check "the OpenClaw CLI can't be shadowed from the volume" \
   '[ "$(docker exec "$gateway" as-node sh -c "command -v openclaw")" = /usr/local/sbin/openclaw ]'
 docker exec "$gateway" as-node rm -f /data/home/.local/bin/gog /data/home/.local/bin/openclaw
+
+log "root never runs code from the volume"
+check "a root shell's HOME and PATH are off the volume" \
+  '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /root ] && ! docker exec "$gateway" sh -c "echo \$PATH" | grep -F /data'
+check "as-node gives node HOME on the volume" '[ "$(docker exec "$gateway" as-node sh -c "echo \$HOME")" = /data/home ]'
+check "as-node finds a tool on the volume without a shell in between" \
+  'docker exec "$gateway" as-node sh -c "printf \"#!/bin/sh\necho volume-tool\n\" > \$HOME/.local/bin/volume-tool && chmod +x \$HOME/.local/bin/volume-tool" && [ "$(docker exec "$gateway" as-node volume-tool)" = volume-tool ]'
+docker exec "$gateway" as-node rm -f /data/home/.local/bin/volume-tool
+check "as-node does not pass TS_AUTHKEY on" \
+  '[ "$(docker exec -e TS_AUTHKEY=tskey-auth-should-not-pass "$gateway" as-node sh -c "echo \${TS_AUTHKEY:-unset}")" = unset ]'
+docker exec "$gateway" bash -ic true >/dev/null 2>&1 || true
+docker exec "$gateway" bash -lc true >/dev/null 2>&1 || true
+docker exec "$gateway" sh -c "ls / && id && env >/dev/null" >/dev/null 2>&1 || true
+docker exec "$gateway" openclaw --version >/dev/null 2>&1 || true
+check "binaries and dotfiles planted on the volume ran as node, never as root" \
+  'docker exec "$gateway" grep -q " 1000$" /data/planted.log && ! docker exec "$gateway" grep -v " 1000$" /data/planted.log'
 
 log "security audit"
 # Prints "<severity> <checkId>" for every critical or warning finding.
@@ -356,7 +413,6 @@ check "the image turns a display name into a machine name (My Gateway -> my-gate
   '[ "$(docker exec "$gateway" node /usr/local/lib/openclaw-railway/tailscale-hostname.mjs "My Gateway")" = my-gateway ]'
 check "the display-name patch is applied to OpenClaw's machine-name fallback" \
   'docker exec "$gateway" sh -c "grep -l OPENCLAW_MACHINE_DISPLAY_NAME /app/dist/machine-name-*.mjs"'
-check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /data/home ]'
 docker exec "$gateway" as-node sh -c 'echo kept > "$HOME/persist-check"'
 gateway_cli config set gateway.controlUi.communityInvite false >/dev/null 2>&1
 check "a config change made from a root shell leaves no root-owned files" '[ -z "$(root_owned_state)" ]'

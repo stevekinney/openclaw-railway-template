@@ -10,7 +10,7 @@
 set -eu
 
 # gog's tokens and Tailscale's socket belong to node.
-[ "$(id -u)" != 0 ] || exec as-node "$0" "$@"
+[ "$(/usr/bin/id -u)" != 0 ] || exec /usr/local/bin/as-node "$0" "$@"
 
 callback_port="${GOG_LOGIN_HTTPS_PORT:-8443}"
 listen_port="${GOG_LOGIN_LISTEN_PORT:-8085}"

@@ -70,7 +70,13 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
   }
 
   return async (request, response) => {
-    const url = new URL(request.url, "http://relay");
+    let url;
+    try {
+      url = new URL(request.url, "http://relay");
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
     // Railway's edge sets X-Real-IP and appends the caller to X-Forwarded-For;
     // a client-supplied X-Forwarded-For value comes first, so use the last.
     const forwarded = String(request.headers["x-forwarded-for"] ?? "").split(",").at(-1).trim();
