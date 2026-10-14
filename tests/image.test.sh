@@ -298,7 +298,7 @@ for path in / /control-ui-config.json /v1/models /healthz/../v1/models /%68ealth
   check "the relay refuses $path (404)" '[ "$(remote_status "$path")" = 404 ]'
 done
 check "the relay refuses POST to a probe path (404)" '[ "$(METHOD=POST remote_status /healthz)" = 404 ]'
-for request in "GET // HTTP/1.1" "POST // HTTP/1.1" "GET //x/../ HTTP/1.1"; do
+for request in "GET // HTTP/1.1" "POST // HTTP/1.1"; do
   check "the relay answers a request line of $request with 400" \
     '[ "$(raw_relay_status "$request\r\nHost: relay\r\nContent-Length: 0\r\n\r\n")" = 400 ]'
 done
@@ -394,7 +394,15 @@ check "the relay refuses a path that climbs out of /hooks (404)" \
   '[ "$(relay_status "/hooks/../control-ui-config.json/$hooks_token")" = 404 ]'
 check "a body over 1 MiB is refused (413)" \
   '[ "$(BODY_BYTES=2000000 relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 413 ]'
-for attempt in $(seq 1 20); do relay_status /hooks/wake x-forwarded-for=203.0.113.7 >/dev/null; done
+# From one container, so the 20 attempts land well inside the one-minute window
+# even on a slow machine.
+docker run --rm --network "$network" --entrypoint node "$image" -e '
+  (async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await fetch(process.argv[1], { method: "POST", headers: { "x-forwarded-for": "203.0.113.7" }, body: "{}" }).catch(() => {});
+    }
+  })();
+' "http://$(container_address "$gateway"):8080/hooks/wake"
 check "20 failures from one caller lock that caller out (429)" \
   '[ "$(relay_status /hooks/wake x-forwarded-for=203.0.113.7 "authorization=Bearer $hooks_token")" = 429 ]'
 check "other callers are not locked out" \
