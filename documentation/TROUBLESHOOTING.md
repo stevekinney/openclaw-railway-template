@@ -59,6 +59,7 @@ files to silence it**; they are the recovery inputs.
 | `the Tailscale machine name is …, not …; it is set only at first login` | The display name or `TS_HOSTNAME` changed after the machine was created, or Tailscale gave it a suffix. The address follows the machine name. | Rename the machine in the admin console to change the address, or set the variable back. |
 | `Tailscale is logged out …; restarting to log in again with TS_AUTHKEY` | The node key expired, or the machine was removed, while the container ran. The sidecar checks every minute. | Nothing, if the restart logs in. If it then fails with `Tailscale login failed`, set a new `TS_AUTHKEY`. |
 | `Tailscale is logged out …, so the Gateway is unreachable` (every 30 minutes) | Same, with no `TS_AUTHKEY` to log in with. | Set a new `TS_AUTHKEY`; Railway redeploys and the container logs back in. |
+| `Waiting for the previous Gateway's owner heartbeat to expire before reclaiming state (up to … seconds)` | The last Gateway was killed (a crash, an out-of-memory kill, or a stop that ran past its timeout) and left its state lock behind. The restarted container can't see the old process, so OpenClaw waits up to 95 seconds for the lock to go stale. | Nothing. It starts on its own; a clean stop releases the lock and never waits. |
 
 ## `railway config plan` proposes a destructive volume change
 

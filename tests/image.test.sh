@@ -125,9 +125,10 @@ local_status() {
   ' "http://127.0.0.1:18789$path" "$@"
 }
 
+# Waits up to $1 seconds (default 120) for /startupz.
 wait_for_startup() {
   attempt=0
-  while [ "$attempt" -lt 60 ]; do
+  while [ "$attempt" -lt "$((${1:-120} / 2))" ]; do
     [ "$(remote_status /startupz 2>/dev/null || true)" = 200 ] && return 0
     attempt=$((attempt + 1))
     sleep 2
@@ -462,7 +463,10 @@ check "the container exits when the Gateway dies, so Railway's restart policy ap
   '[ "$(docker inspect -f "{{.State.Running}}" "$gateway")" = false ]'
 check "the crash exit code is non-zero" '[ "$(docker inspect -f "{{.State.ExitCode}}" "$gateway")" != 0 ]'
 docker start "$gateway" >/dev/null
-check "the Gateway recovers after a crash" 'wait_for_startup'
+# A killed Gateway leaves its state-ownership lock behind, and the restarted
+# container can't see the old process, so OpenClaw waits up to 95 seconds for
+# the lock's heartbeat to go stale before it starts.
+check "the Gateway recovers after a crash" 'wait_for_startup 300'
 
 # The sidecar under tini, as in the real container, with tailscaled logged out.
 docker run -d --name "$watchdog" --user node -e TS_STATE_DIR=/tmp/tailscale -e TS_SOCKET=/tmp/tailscaled.sock \
