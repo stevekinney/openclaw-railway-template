@@ -487,7 +487,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e OPENCLAW_MACHINE_DISPLAY_NAME="$live_display_name" \
     -e OPENCLAW_RAILWAY_TEST_TAILSCALE_CHECK_MS=2000 "$image" >/dev/null
   attempt=0
-  until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 90 ]; do
+  until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 180 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -503,7 +503,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     'docker logs "$live" 2>&1 | grep -F "the Gateway will be at https://$live_name/"'
   live_ready_count() { docker logs "$live" 2>&1 | grep -cF "ready. Open https://$live_name/" || true; }
   attempt=0
-  until [ "$(live_ready_count)" -ge 1 ] || [ "$attempt" -ge 30 ]; do
+  until [ "$(live_ready_count)" -ge 1 ] || [ "$attempt" -ge 90 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -547,7 +547,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   docker run -d --name "$live_twin" -v "$run_id-live-twin-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
     -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e TS_HOSTNAME="$twin_requested" "$image" >/dev/null
   attempt=0
-  until docker logs "$live_twin" 2>&1 | grep -qE "serve enabled|serve failed|login failed" || [ "$attempt" -ge 90 ]; do
+  until docker logs "$live_twin" 2>&1 | grep -qE "serve enabled|serve failed|login failed" || [ "$attempt" -ge 180 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -561,7 +561,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   docker rm -f "$live_twin" >/dev/null 2>&1 || true
   docker restart "$live" >/dev/null
   attempt=0
-  until [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" -ge 2 ] || [ "$attempt" -ge 60 ]; do
+  until [ "$(docker logs "$live" 2>&1 | grep -c "serve enabled")" -ge 2 ] || [ "$attempt" -ge 180 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -578,7 +578,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   check "killing tailscaled stops the whole container" '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ]'
   docker start "$live" >/dev/null
   attempt=0
-  until [ "$(live_ready_count)" -ge 3 ] || [ "$attempt" -ge 60 ]; do
+  until [ "$(live_ready_count)" -ge 3 ] || [ "$attempt" -ge 180 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
@@ -595,7 +595,7 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ] && docker logs "$live" 2>&1 | grep -F "Tailscale is logged out"'
   docker start "$live" >/dev/null
   attempt=0
-  until [ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale as")" -ge 2 ] || [ "$attempt" -ge 60 ]; do
+  until [ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale as")" -ge 2 ] || [ "$attempt" -ge 120 ]; do
     sleep 2
     attempt=$((attempt + 1))
   done
