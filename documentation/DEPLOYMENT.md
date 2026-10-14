@@ -9,10 +9,8 @@ Two ways to deploy:
 
 Both end at the same place: a Gateway reachable only through your tailnet, with
 the macOS app paired and, optionally, Telegram. Tailscale runs inside the
-`openclaw` container, and OpenClaw manages Tailscale Serve itself. Steps marked
-**live-unverified** have run locally against a real tailnet but not yet on
-Railway in this layout; the rest of this page was run against a live Railway
-project on 2026-10-08.
+`openclaw` container, and OpenClaw manages Tailscale Serve itself. What has been
+verified, and where, is in [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md).
 
 ## Prerequisites
 
@@ -20,7 +18,8 @@ project on 2026-10-08.
   build without the Railway GitHub app; private forks need it.
 - [Railway CLI](https://docs.railway.com/cli) **5.42.1 or newer** (`brew install railway`),
   logged in with `railway login`, plus an SSH key registered with Railway:
-  `railway ssh keys add --key ~/.ssh/id_ed25519.pub`. Railway publishes no
+  `railway ssh keys add --key ~/.ssh/id_ed25519.pub` (create the key first with
+  `ssh-keygen -t ed25519` if you don't have one). Railway publishes no
   host-key fingerprints for `ssh.railway.com` and rotates keys across hosts, so
   the first connection is trust-on-first-use: accept the prompt once in an
   interactive terminal.
@@ -28,6 +27,11 @@ project on 2026-10-08.
 - A Tailscale tailnet with MagicDNS and
   [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled.
   Serve requires them; there is no plaintext fallback.
+- The device you browse from, with the Tailscale client installed, signed in to
+  that tailnet, and connected. The Gateway has no public address.
+- A Tailscale auth key:
+
+  > Tailscale auth key settings: not reusable, not ephemeral, pre-approved if your tailnet requires device approval, and tagged `tag:openclaw` if your policy defines it. Expiry, the machine's key expiry, and why: [TAILSCALE.md](TAILSCALE.md#auth-key-settings)
 
 ## 1. Create the Railway project
 
@@ -102,21 +106,31 @@ security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n'
 
 (Elsewhere: `openssl rand -hex 32 | tee /dev/tty | tr -d '\n' | railway variable set OPENCLAW_GATEWAY_TOKEN --stdin --service openclaw --skip-deploys`,
 and save the printed value in a password manager.) Seal the token in the
-dashboard (Variables → ⋯ → Seal) if you don't need to read it back.
+dashboard (Variables → ⋯ → Seal) if you don't need to read it back; a sealed
+value can't be read by `railway variable list` or the dashboard afterwards.
 
-Name the Gateway. The name is shown in OpenClaw's apps, and its lowercase,
-hyphenated form names the Tailscale machine and the address (`My Gateway` →
-`https://my-gateway.<your-tailnet>.ts.net/`). Without it, both are `openclaw`;
-this page uses `openclaw` in its examples.
+### Rotate the token
+
+Run the same commands again. `-U` replaces the Keychain item, and without
+`--skip-deploys` Railway redeploys with the new token. Then update every client
+that holds the old one: the Mac app (`openclaw-mac primary set …`, step 8),
+and any other client or script. Paired devices keep their own device tokens; to
+cut one off, revoke it ([SECURITY.md](SECURITY.md#rotating-credentials)).
+
+Name the Gateway. The display name is shown in OpenClaw's apps, and its
+lowercase, hyphenated form is the machine name, which names the Tailscale
+machine and the address (`My Gateway` →
+`https://my-gateway.<your-tailnet>.ts.net/`; see
+[TAILSCALE.md](TAILSCALE.md#tailscale) for both terms). Without it, both are
+`openclaw`. This page writes the machine name as `<machine-name>`.
 
 ```bash
 railway variable set 'OPENCLAW_MACHINE_DISPLAY_NAME=My Gateway' --service openclaw --skip-deploys
 ```
 
 Then create an auth key in the Tailscale admin console (**Settings → Keys →
-Generate auth key**: not reusable, not ephemeral, 1-day expiry, tagged
-`tag:openclaw` if your policy defines it; see [TAILSCALE.md](TAILSCALE.md)),
-copy it, and set it:
+Generate auth key**, 1-day expiry; see the settings under
+[Prerequisites](#prerequisites)), copy it, and set it:
 
 ```bash
 pbpaste | tr -d '\n' | railway variable set TS_AUTHKEY --stdin --service openclaw
@@ -131,23 +145,22 @@ railway logs --service openclaw
 Expect, in order:
 
 - `openclaw-railway: created /data/.openclaw/openclaw.json from the baseline config`
-- `openclaw-railway: logged in to Tailscale as openclaw`
-- `openclaw-railway: the Gateway will be at https://openclaw.<your-tailnet>.ts.net/` (logged on every start)
-- Doctor output, then `[tailscale] serve enabled: https://openclaw.<your-tailnet>.ts.net/`
+- `openclaw-railway: logged in to Tailscale as <machine-name>`
+- `openclaw-railway: the Gateway will be at https://<machine-name>.<your-tailnet>.ts.net/` (logged on every start)
+- Doctor output, then `[tailscale] serve enabled: https://<machine-name>.<your-tailnet>.ts.net/`
 - `[gateway] http server listening`
 
 Railway marks the deploy healthy once `/startupz` returns 200 through the health
-relay (≈3 minutes the first time, mostly pulling the base image). A machine
-named after the Gateway is now in your tailnet. If the tailnet already had one with that name, Tailscale adds a suffix (`openclaw-1`), the login line says `logged in to Tailscale as openclaw-1 (asked for openclaw)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
+relay (about 4 minutes the first time, mostly pulling the base image). A machine
+named after the Gateway is now in your tailnet. If the tailnet already had one with that name, Tailscale adds a suffix (`<machine-name>-1`), the login line says `logged in to Tailscale as <machine-name>-1 (asked for <machine-name>)`, and the address follows; use the address from the `the Gateway will be at` line. From any tailnet device:
 
 ```bash
-curl -fsS https://openclaw.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}
+curl -fsS https://<machine-name>.<your-tailnet>.ts.net/healthz   # {"ok":true,"status":"live"}
 ```
 
 The first HTTPS request to a new machine takes about 15 seconds while Tailscale
 issues its certificate. If the name was already taken, the machine has a `-1`
 suffix and the address follows; OpenClaw picks up the real name itself.
-**(live-unverified** on Railway in this layout.)
 
 ## 4. Choose an AI provider
 
@@ -177,8 +190,13 @@ railway ssh --service openclaw -- openclaw onboard --non-interactive --accept-ri
 This creates the `main` agent, its workspace under `/data/.openclaw/workspace`,
 and an auth profile that *references* `ANTHROPIC_API_KEY` rather than copying it.
 Keep `--gateway-bind loopback`: OpenClaw-managed Serve requires it, and
-onboarding keeps `gateway.tailscale.mode: "serve"` (verified locally). With
-`lan`, the next start refuses the config.
+onboarding keeps `gateway.tailscale.mode: "serve"`. With `lan`, the next start
+refuses the config.
+
+You can also connect a provider in the dashboard (**Settings → Model Setup →
+Connect provider**), which skips this step and step 4. It stores the key on the
+volume instead of referencing the variable; see
+[QUICKSTART.md](QUICKSTART.md#4-add-your-model-provider).
 For other providers replace `--auth-choice apiKey` (see `openclaw onboard --help`
 and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-automation)).
 
@@ -186,7 +204,7 @@ and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-auto
 
 Onboarding rewrites the Gateway settings, which needs a restart. Because Railway is the
 supervisor (`OPENCLAW_SUPERVISOR_MODE=external`), the Gateway exits cleanly and
-Railway's `ALWAYS` restart policy starts it again (observed: back in ≈30 s).
+Railway's `ALWAYS` restart policy starts it again (back in about 30 s).
 Then check that the agent answers:
 
 ```bash
@@ -199,9 +217,8 @@ state; the agent message tests the same credential end to end.
 
 ## 7. Open the dashboard
 
-On any tailnet device, open `https://openclaw.<your-tailnet>.ts.net/`. The
-browser signs in with your Tailscale identity: no token and no device approval
-(verified locally against a real tailnet). Anyone your Tailscale access policy
+On any tailnet device, open `https://<machine-name>.<your-tailnet>.ts.net/`. The
+browser signs in with your Tailscale identity: no token and no device approval. Anyone your Tailscale access policy
 lets reach the machine on port 443 can sign in this way, so check the policy
 ([TAILSCALE.md](TAILSCALE.md), [SECURITY.md](SECURITY.md)).
 
@@ -213,12 +230,12 @@ expiry in the admin console, or it leaves the tailnet after 180 days.
 ```bash
 security find-generic-password -s openclaw-railway-gateway-token -w | tr -d '\n' | \
   /Applications/OpenClaw.app/Contents/MacOS/openclaw-mac primary set \
-    --direct-url wss://openclaw.<your-tailnet>.ts.net --token-stdin
+    --direct-url wss://<machine-name>.<your-tailnet>.ts.net --token-stdin
 ```
 
 `primary set` replaces the app's current primary connection (undo with
 `openclaw-mac primary set --local`). To keep your current primary and add this
-Gateway alongside it, use `openclaw-mac gateway add Railway --url https://openclaw.<your-tailnet>.ts.net --token-stdin`.
+Gateway alongside it, use `openclaw-mac gateway add Railway --url https://<machine-name>.<your-tailnet>.ts.net --token-stdin`.
 Details and the in-app route: [DESKTOP.md](DESKTOP.md).
 
 ## 9. Approve device pairing
@@ -240,8 +257,7 @@ allow ([SECURITY.md](SECURITY.md#local-node-permissions-the-mac)); from the CLI
 it's `openclaw nodes pending` / `openclaw nodes approve <id>`.
 
 Pairing is stored in `/data/.openclaw/state/openclaw.sqlite` and survives
-redeploys; existing pairings carried over the move to this layout. (A
-brand-new pairing on this layout is **live-unverified**.)
+redeploys.
 
 ## 10. Connect Telegram
 
@@ -253,8 +269,8 @@ brand-new pairing on this layout is **live-unverified**.)
    ```
 
    On the next start, OpenClaw enables Telegram with `dmPolicy: "pairing"` and
-   `groupPolicy: "allowlist"`, reading the token from the environment (verified
-   locally; the token is never written to the volume).
+   `groupPolicy: "allowlist"`, reading the token from the environment (the token
+   is never written to the volume).
 3. DM your bot. It replies with a pairing code and your numeric Telegram user ID.
 4. Approve the code. The first approved pairing also becomes the command owner:
 
@@ -268,9 +284,6 @@ brand-new pairing on this layout is **live-unverified**.)
    railway ssh --service openclaw -- openclaw config set channels.telegram.allowFrom '["<your-user-id>"]'
    railway ssh --service openclaw -- openclaw config set channels.telegram.dmPolicy allowlist
    ```
-
-**(live-unverified:** Telegram has been tested locally with a dummy token, not
-with a real bot on Railway.)
 
 ## 11. Run the security audit
 
@@ -291,7 +304,7 @@ reported `gateway.probe_failed` on every 2026.9.8 install
 | --- | --- | --- |
 | Version | `railway ssh --service openclaw -- openclaw --version` | `OpenClaw 2026.9.8` |
 | Gateway health | `railway ssh --service openclaw -- openclaw health` | OK |
-| Deep readiness | `curl -fsS https://openclaw.<tailnet>.ts.net/readyz` (tailnet device) | `{"ready":true}` |
+| Deep readiness | `curl -fsS https://<machine-name>.<tailnet>.ts.net/readyz` (tailnet device) | `{"ready":true}` |
 | No public exposure | Railway dashboard → `openclaw` → Settings → Networking | no domains, no TCP proxy |
 | Loopback-only Gateway | `railway ssh --service openclaw -- openclaw config get gateway.bind` | `loopback` |
 | Desktop | `openclaw-mac status --json` | primary `connected` |
@@ -315,52 +328,38 @@ variable if you confirm. So:
 
 ## Backups
 
-Turn on scheduled volume backups in the dashboard (`openclaw` → **Backups** →
-Daily and Weekly). The volume holds the Tailscale node key too, so a restore
-brings back the same machine. See [UPGRADING.md](UPGRADING.md#5-back-up) for
-on-demand backups and restores.
+Scheduled volume backups are set in the dashboard (`openclaw` → **Backups** →
+Daily and Weekly). They were not available on the Hobby plan, and Railway's
+backup docs don't say which plans include them, so check the tab on yours. The
+volume holds the Tailscale node key too, so a restore brings back the same
+machine. Without scheduled backups, `openclaw backup create` produces a portable
+archive of the Gateway's state on any plan. See
+[UPGRADING.md](UPGRADING.md#5-back-up) for both, and for restores.
 
-## Maintaining the Railway template
+## Cost and teardown
 
-The published template is generated from a separate source project, not from a
-live deployment, so no real secret can reach it. Railway's `templateGenerate`
-keeps service names, sources, health-check paths, restart policy, volume mount
-paths, and template *functions* such as `${{secret(64, "abcdef0123456789")}}`.
-It **drops literal variable values**, marks every variable required, and drops
-variable descriptions. That is why the service takes no `PORT` variable and
-relies on Railway's default. The template asks for
-`OPENCLAW_MACHINE_DISPLAY_NAME` (no default, so each deployment gets its own
-machine name) and `TS_AUTHKEY`; it generates `OPENCLAW_GATEWAY_TOKEN`.
+**What it uses.** One always-on service and one 5 GB volume. Plan on at least
+2 GB of memory and 1 vCPU (idle memory is about 0.9 GB for the Gateway, plus
+`tailscaled` and the sidecar); browser automation and large agent fleets need
+more. The image is about 6 GB, which affects the first build only, and the
+volume grows with media, SQLite, the workspace, and tools you install. See
+[ARCHITECTURE.md](ARCHITECTURE.md#requirements-and-limits). Railway bills by
+usage; see [Railway's pricing](https://docs.railway.com/pricing/plans) for the
+rates and what each plan includes. Model provider usage is billed separately by
+the provider.
 
-**The template's readme** (the text on the template page) lives in [RAILWAY_TEMPLATE.md](RAILWAY_TEMPLATE.md). Railway strips anything that looks like an HTML tag when it saves the readme, even inside backticks, so write placeholders as `your-tailnet`, never `<tailnet>`; `npm run test:railway-config` checks this. To publish a change to the readme, run from the repository root:
+**Removing it.**
 
-```bash
-railway api 'mutation($id: String!, $i: TemplatePublishInput!) { templatePublish(id: $id, input: $i) { status } }' \
-  --variables "$(jq -n --rawfile readme documentation/RAILWAY_TEMPLATE.md \
-    '{id: "<template-id>", i: {category: "AI/ML", description: "Private OpenClaw Gateway, reachable only over your Tailscale tailnet", readme: $readme}}')"
-```
-
-`railway api 'query { template(code: "openclaw-private-gateway") { id readme } }'` prints the template's ID and shows the published readme afterwards.
-
-**Small changes** (variables, descriptions, defaults): edit the published
-template directly. Railway dashboard → workspace **Templates** → the template →
-**Edit** → **Architecture**, open the service's **Variables**, make the change,
-review **Details**, and **Apply**. Check the result with
-`railway api 'query { template(code: "openclaw-private-gateway") { serializedConfig } }'`.
-
-**Structural changes** (services, volumes, sources): regenerate. Running
-`templateGenerate` on a project that already has a template **updates that
-template in place**, even when it is published, and the published template's
-original source project no longer exists. So:
-
-1. In a scratch project whose service mirrors `.railway/railway.ts`, set
-   `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and
-   placeholder values for `OPENCLAW_MACHINE_DISPLAY_NAME` and `TS_AUTHKEY`.
-2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
-3. Inspect `serializedConfig`: no secret values, one service, one volume at `/data`.
-4. Deploy it into another scratch project
-   (`railway deploy -t <code> -v openclaw.TS_AUTHKEY=…`, with a reusable,
-   ephemeral key) and wait for `openclaw` to turn healthy.
-5. Publish the new template (a new URL), add the variable descriptions for
-   `OPENCLAW_MACHINE_DISPLAY_NAME` and `TS_AUTHKEY` in the template editor, point the README's Deploy button at it,
-   and unpublish the old one.
+1. In Railway, delete the `openclaw` service and its `openclaw-state` volume (or
+   the whole project, if it holds nothing else). The volume is where every
+   conversation, credential, and the Tailscale node key live, so export what you
+   want first ([UPGRADING.md](UPGRADING.md#5-back-up)).
+2. In the Tailscale admin console, remove the machine (**Machines → ⋯ →
+   Remove**).
+3. Under **Settings → Keys**, revoke any auth key you created for it that is
+   still valid.
+4. Revoke the model provider key, and the Telegram bot token with `/revoke` in
+   @BotFather, if you used them.
+5. On the Mac, restore the app's own Gateway (`openclaw-mac primary set
+   --local`) and delete the Keychain item (`security delete-generic-password -s
+   openclaw-railway-gateway-token`).
