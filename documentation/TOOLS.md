@@ -10,7 +10,7 @@ volume, where updates persist ([below](#keeping-tools-current)):
 | `gh` | 2.102.0 | GitHub connections, `github`, `gh-issues` | GitHub release, `Dockerfile` |
 | `gog` | 0.44.0 | `gog` (Gmail, Calendar, Drive, Contacts, Sheets, Docs) | GitHub release, `Dockerfile` |
 | `claude` | 2.1.296 | `coding-agent` | npm, `tools/package-lock.json` |
-| `codex` | follows OpenClaw (0.158.0 in 2026.9.8) | `coding-agent` | already in the OpenClaw image |
+| `codex` | follows OpenClaw (0.160.0 in 2026.10.3) | `coding-agent` | already in the OpenClaw image |
 | `jq`, `tmux` | Debian stable | `trello`, `tmux` | apt, `Dockerfile` |
 | ImageMagick, libheif | Debian stable | OpenClaw's image processing: HEIC/HEIF photos (iPhone) | apt, `Dockerfile` |
 
