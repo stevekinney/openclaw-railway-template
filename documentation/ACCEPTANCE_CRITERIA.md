@@ -25,23 +25,26 @@ probe-only health relay in `scripts/sidecar.mjs`, and one audit warning
 
 ## Local tests
 
-- `sh tests/image.test.sh`: core tier, **91 checks** in a full run, no tailnet
+- `sh tests/image.test.sh`: core tier, **104 checks** in a full run, no tailnet
   needed. It covers the relay's 404 matrix and the Gateway port being
   unreachable from the network, loopback authentication and proxy attribution,
   the webhook routes (token in header or path, refusals, 413, per-caller
   lockout, off unless opted in), the entrypoint's refusals (missing or rejected
   auth key, old-layout config, `PORT` collision, `hooks.gmail.tailscale.mode`,
   a display name with no letters or digits), the default machine name,
-  the `tailscaled` watchdog, persistence, ownership repair, and crash handling.
+  the `tailscaled` watchdog, persistence, ownership repair, root never running
+  code from the volume, and crash handling (including the wait for a killed
+  Gateway's state locks). All 104 passed in CI on 2026-10-14 (OpenClaw 2026.10.3).
 - The same script's **live tier** runs when `TAILSCALE_TEST_AUTHKEY` is set (a
   reusable, ephemeral key): real login, Serve URL, QR address, key hygiene,
   restart reuse, watchdog, the machine name derived from the display name
   (`OpenClaw Test 29388` → `openclaw-test-29388`), the logged tailnet address (on every boot, and the name Tailscale assigned when a second machine asks for a taken hostname), and, with `TAILSCALE_TEST_ON_TAILNET=1`, the
-  dashboard over the tailnet and `gog-login`'s callback route: 18 checks. All
-  109 passed on 2026-10-13. CI passes the key from an optional repository
+  dashboard over the tailnet and `gog-login`'s callback route, the ready banner,
+  and the restart after a logout: 22 checks. The 18 older ones passed together on
+  2026-10-13 (OpenClaw 2026.9.8); the 4 added since were verified on 2026-10-14. CI passes the key from an optional repository
   secret.
 - `npm run test:railway-config` (8 tests), `npm run test:scripts` (13 tests of
-  the machine-name rule), `npm run typecheck`, ShellCheck,
+  the machine-name rule, 12 of the webhook relay), `npm run typecheck`, ShellCheck,
   Hadolint, and actionlint.
 
 Remote-peer device-pairing tests were removed with the layout change: there is
