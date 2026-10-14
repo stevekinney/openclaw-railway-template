@@ -90,6 +90,9 @@ stops the container so that happens.
    through a mode-600 temporary file (never on the command line, where `ps`
    would show it), then delete the file. If it is already logged in, the key is
    not used. Then unset `TS_AUTHKEY`.
+   If the last Gateway was killed and left state locks under
+   `/data/.openclaw/tmp` renewed in the last 95 seconds, wait for them to
+   expire; OpenClaw would otherwise exit on them.
 6. `exec setpriv` → `node` user → `tini` → OpenClaw's `docker-entrypoint.mjs`,
    which runs Doctor migrations under exclusive state ownership, then `execve`s
    the Gateway with `--bind loopback --tailscale serve --auth token`.

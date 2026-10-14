@@ -467,10 +467,11 @@ check "the container exits when the Gateway dies, so Railway's restart policy ap
   '[ "$(docker inspect -f "{{.State.Running}}" "$gateway")" = false ]'
 check "the crash exit code is non-zero" '[ "$(docker inspect -f "{{.State.ExitCode}}" "$gateway")" != 0 ]'
 docker start "$gateway" >/dev/null
-# A killed Gateway leaves its state-ownership lock behind, and the restarted
-# container can't see the old process, so OpenClaw waits up to 95 seconds for
-# the lock's heartbeat to go stale before it starts.
+# A killed Gateway leaves its state locks behind; the entrypoint waits for them
+# to expire (up to 95 seconds) instead of letting OpenClaw exit on them.
 check "the Gateway recovers after a crash" 'wait_for_startup 300'
+check "the entrypoint waits out the crashed Gateway's state lock" \
+  'docker logs "$gateway" 2>&1 | grep -q "the previous Gateway stopped without releasing its state lock"'
 
 # The sidecar under tini, as in the real container, with tailscaled logged out.
 docker run -d --name "$watchdog" --user node -e TS_STATE_DIR=/tmp/tailscale -e TS_SOCKET=/tmp/tailscaled.sock \

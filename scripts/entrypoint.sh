@@ -248,4 +248,25 @@ if [ -z "$without_tailscale" ]; then
 fi
 unset TS_AUTHKEY
 
+# A Gateway that was killed (a crash, an out-of-memory kill) leaves its state
+# locks on the volume. This container can't see the old process, so OpenClaw
+# treats a lock renewed in the last 90 seconds as live and exits instead of
+# waiting, and Railway would restart it in a loop until the lock expires. Wait
+# here instead. A clean stop removes the locks, so this costs nothing then.
+lock_directory="$state_directory/tmp/openclaw-$(/usr/bin/id -u node)"
+newest_lock=0
+for lock in "$lock_directory"/*.lock; do
+  [ -f "$lock" ] || continue
+  renewed="$(/usr/bin/stat -c %Y "$lock")"
+  [ "$renewed" -le "$newest_lock" ] || newest_lock="$renewed"
+done
+if [ "$newest_lock" -gt 0 ]; then
+  lock_age=$(($(/usr/bin/date +%s) - newest_lock))
+  [ "$lock_age" -ge 0 ] || lock_age=0
+  if [ "$lock_age" -lt 95 ]; then
+    echo "openclaw-railway: the previous Gateway stopped without releasing its state lock (renewed ${lock_age}s ago); waiting $((95 - lock_age))s for it to expire."
+    /usr/bin/sleep $((95 - lock_age))
+  fi
+fi
+
 exec /usr/local/bin/as-node "$@"
