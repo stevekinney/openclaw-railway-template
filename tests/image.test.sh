@@ -136,6 +136,8 @@ wait_for_startup() {
     sleep 2
   done
   docker logs "$gateway" 2>&1 | tail -40 | sed 's/^/       | /' >&3
+  # The CLI's own log has the error behind "The CLI command failed."
+  docker cp "$gateway:/tmp/openclaw/." - 2>/dev/null | tar -xO 2>/dev/null | grep -iE 'error|fail' | tail -15 | cut -c1-600 | sed 's/^/       > /' >&3
   return 1
 }
 
