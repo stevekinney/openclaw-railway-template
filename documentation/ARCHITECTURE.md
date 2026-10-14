@@ -46,12 +46,15 @@ binaries, and the tools skills need:
   `tailscale/tailscale:v1.102.5` image in a multi-stage build. Dependabot tracks
   that `FROM` line along with OpenClaw's.
 - `scripts/as-node.sh`, plus `openclaw` and `brew` wrappers built on it, run
-  commands typed in a root `railway ssh` shell as `node`, so operator commands
-  cannot leave root-owned state.
+  commands as `node` with its environment (`HOME` and tools on the volume). The
+  entrypoint starts the Gateway and the sidecar with it, and in a root
+  `railway ssh` shell it keeps operator commands from leaving root-owned state.
+  Root's own `HOME` and `PATH` stay off the volume, and every program root runs
+  is named by absolute path, so nothing the agent writes there runs as root.
 - `config/openclaw.seed.json` is the baseline config (below).
 - A pinned baseline of skill tools (`gh`, `gog`, Claude Code, Codex, `jq`,
-  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with `HOME` on the
-  volume so logins and updates persist. See [TOOLS.md](TOOLS.md).
+  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with node's `HOME`
+  on the volume so logins and updates persist. See [TOOLS.md](TOOLS.md).
 
 After the privilege drop, everything runs as `node` (uid 1000):
 
@@ -128,14 +131,20 @@ Agent-level policy (tools, channel allowlists) is the operator's choice; see
 
 ## The sidecar
 
-`scripts/sidecar.mjs` is about 40 lines with two jobs:
+`scripts/sidecar.mjs` is about 70 lines with up to three jobs (the third is opt-in):
 
 1. **Run `tailscaled`.** Userspace networking (Railway grants no TUN device or
    `NET_ADMIN`), as `node`, state in `/data/tailscale`, socket at the CLI's
    default path so `tailscale` and OpenClaw need no flags. If `tailscaled` exits,
    the sidecar sends SIGTERM to PID 1 (`tini`), the Gateway shuts down cleanly,
    and the container stops, so Railway restarts Tailscale and the Gateway
-   together (≈2 s, verified).
+   together (≈2 s, verified). Once the Gateway answers `/startupz`, the sidecar
+   logs `ready` with the dashboard address, then checks every minute that
+   Tailscale is still logged in. After three minutes logged out (an expired
+   node key, a machine removed in the admin console), it restarts the container
+   if `TS_AUTHKEY` is set, so the entrypoint logs back in; otherwise it logs what
+   to do every 30 minutes. No request to `PORT` can stop the sidecar: malformed
+   requests are answered, and unexpected errors are logged.
 2. **Relay the deploy health check.** Railway's check comes in over the
    container's network and can't reach a loopback-only Gateway, and OpenClaw has
    no separate probe port. The relay listens on `PORT` (8080) and forwards only
@@ -230,7 +239,7 @@ policy is also who can open the dashboard. See
 
 | Concern | Owner | Mechanism |
 | --- | --- | --- |
-| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s (300 s from the template). 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
+| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s. 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
 | Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), and a dead `tailscaled` also stops the container with exit 0. |
 | Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains, releases its Serve claim, and exits 0 (≈60 ms when idle). |
 | Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. A killed `tailscaled` makes the sidecar stop the container. |
