@@ -128,7 +128,7 @@ Agent-level policy (tools, channel allowlists) is the operator's choice; see
 
 ## The sidecar
 
-`scripts/sidecar.mjs` is about 40 lines with two jobs:
+`scripts/sidecar.mjs` is about 70 lines with up to three jobs (the third is opt-in):
 
 1. **Run `tailscaled`.** Userspace networking (Railway grants no TUN device or
    `NET_ADMIN`), as `node`, state in `/data/tailscale`, socket at the CLI's
@@ -230,7 +230,7 @@ policy is also who can open the dashboard. See
 
 | Concern | Owner | Mechanism |
 | --- | --- | --- |
-| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s (300 s from the template). 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
+| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s. 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
 | Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), and a dead `tailscaled` also stops the container with exit 0. |
 | Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains, releases its Serve claim, and exits 0 (≈60 ms when idle). |
 | Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. A killed `tailscaled` makes the sidecar stop the container. |

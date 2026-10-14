@@ -48,14 +48,14 @@ as-node claude auth login
 
 `gog` needs your own Google OAuth client and a password for its token file.
 `gog-login` signs it in through your tailnet: Google redirects your browser to
-`https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, and a Tailscale Serve
+`https://<machine-name>.<tailnet>.ts.net:8443/oauth2/callback`, and a Tailscale Serve
 route that exists only while `gog-login` runs hands the callback to `gog`.
 Nothing needs a `127.0.0.1` redirect or a pasted URL.
 
 1. In Google Cloud Console, enable the APIs you want (Gmail, Calendar, Drive, …)
    and create an OAuth client of type **Web application** (a **Desktop app**
    client only allows `127.0.0.1` redirects). Under **Authorized redirect URIs**
-   add `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, using the
+   add `https://<machine-name>.<tailnet>.ts.net:8443/oauth2/callback`, using the
    machine's real name, and download the client JSON.
 2. Give the token file a password, stored as a sealed Railway variable:
 

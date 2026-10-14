@@ -48,7 +48,7 @@ Known trade-offs:
 ## Tailnet identity sign-in
 
 With `gateway.tailscale.mode: serve`, `gateway.auth.allowTailscale` defaults to
-`true`. A browser that opens `https://openclaw.<tailnet>.ts.net/` signs in to the
+`true`. A browser that opens `https://<machine-name>.<tailnet>.ts.net/` signs in to the
 Control UI with its Tailscale identity: no token and no device approval
 (verified; no pairing record is created). Only the Control UI WebSocket and
 avatar reads accept it; HTTP API endpoints (`/v1/*`, `/tools/invoke`, …) always
@@ -242,14 +242,14 @@ web, or browser tools) and keep it out of `main`'s sessions.
 
 | Credential | Rotate by | Notes |
 | --- | --- | --- |
-| Gateway token | Set a new `OPENCLAW_GATEWAY_TOKEN` (deployment step 3; Railway redeploys), then update each client. | Paired devices also hold per-device tokens that a shared-token rotation does not revoke. To cut a device off, `openclaw devices revoke --device <id> --role <role>`. |
-| Provider key | Set the new value on the Railway variable; revoke the old key at the provider. | Onboarding stored a reference, so no OpenClaw change is needed. |
+| Gateway token | Set a new `OPENCLAW_GATEWAY_TOKEN` ([Rotate the token](DEPLOYMENT.md#rotate-the-token); Railway redeploys), then update each client, including the Mac app's Keychain item. | Paired devices also hold per-device tokens that a shared-token rotation does not revoke. To cut a device off, `openclaw devices revoke --device <id> --role <role>`. |
+| Provider key | Set the new value on the Railway variable; revoke the old key at the provider. | Onboarding stored a reference, so no OpenClaw change is needed. A key added in the dashboard (Connect provider) is stored on the volume instead; replace it there. |
 | Telegram bot token | `/revoke` in @BotFather, set the new `TELEGRAM_BOT_TOKEN`. | |
 | Tailscale node | [TAILSCALE.md](TAILSCALE.md#operations) | `TS_AUTHKEY` is used only on first login; rotating it changes nothing until the node is logged out. |
 
 ## If something is compromised
 
-1. Remove the `openclaw` machine from the tailnet (admin console) to cut all
+1. Remove the Gateway's machine from the tailnet (admin console) to cut all
    access immediately.
 2. Rotate the Gateway token and revoke every paired device:
    `openclaw devices list`, then `openclaw devices revoke …`.
