@@ -10,11 +10,20 @@ branch it watches. Treat the merge of an upgrade PR as the deploy step below.
 
 ## 1. Review the release
 
-- Release notes: <https://github.com/openclaw/openclaw/releases>. The npm
-  package carries the same `CHANGELOG.md` and the docs for that exact version:
+- Release notes: <https://github.com/openclaw/openclaw/releases>. A GitHub
+  release body only links to the notes; the text is in the repository at
+  `CHANGELOG/<version>.md` (`gh api repos/openclaw/openclaw/contents/CHANGELOG/<version>.md -H 'Accept: application/vnd.github.raw'`).
+  The npm package carries the same `CHANGELOG.md` and the docs for that exact version:
   `npm pack openclaw@<version> && tar xzf openclaw-<version>.tgz package/CHANGELOG.md package/docs`.
+- Read every release between the pinned version and the new one, not only the
+  newest; a skipped release's breaking change is still yours.
 - Look for config migrations, retired keys, database schema changes, Node
   version changes, and anything under "Upgrading very old versions".
+- Check what this template depends on: the `gateway` flags in the Dockerfile's
+  `CMD` (`--bind`, `--tailscale`, `--auth`), the keys in
+  `config/openclaw.seed.json`, `openclaw doctor --fix` and `docker-entrypoint.mjs`
+  (the stock entrypoint), Tailscale Serve, and the `/app/dist/machine-name-*.mjs`
+  file that `scripts/patch-machine-display-name.mjs` edits.
 - Pick stable releases (`latest`). Avoid `-beta` tags. OpenClaw also publishes
   an `extended-stable` line if you prefer a slower cadence.
 
@@ -32,10 +41,21 @@ docker buildx imagetools inspect "ghcr.io/openclaw/openclaw:$version" --format '
 Nothing else references the OpenClaw version. (The Tailscale binaries have
 their own `FROM … AS tailscale` line; see [Tailscale upgrades](#tailscale-upgrades).)
 
-## 3–4. Build and validate
+The image build runs `scripts/patch-machine-display-name.mjs` against OpenClaw's
+compiled `machine-name-*.mjs` and fails if that code changed shape. When an
+upgrade trips it, look at that one file in the new image, adapt the patch, and
+keep `OPENCLAW_MACHINE_DISPLAY_NAME` working; if OpenClaw gained a setting for
+the Gateway's display name, use that and delete the patch.
 
-CI (`.github/workflows/ci.yml`) builds the image and runs `tests/image.test.sh`
-against it on every PR. Among other things, it checks that `openclaw --version`
+## 3. Build and validate
+
+CI (`.github/workflows/ci.yml`) runs the static checks first (type-check,
+config tests, `node --check`, ShellCheck, Hadolint), then, only if they pass,
+builds the image and runs `tests/image.test.sh` against it on every PR. A
+separate job also builds the image for `linux/arm64` without running it: `gh`
+and `gog` take different checksum branches there, and the tests only run on
+amd64. The ShellCheck and Hadolint images are pinned by digest in the workflow,
+so bump those by hand. Among other things, it checks that `openclaw --version`
 inside the built image equals the `FROM` tag, that a fresh volume boots, that an
 existing volume survives a restart, and that auth, proxy attribution, the health
 relay, and the security audit still behave. With the optional
@@ -45,15 +65,17 @@ Dependabot pull requests don't receive secrets, so they run the core tier only.
 Don't merge on red.
 
 To test an upgrade against a copy of real state, restore an OpenClaw backup
-archive (step 5) into a local Docker volume and start the new image on it.
+archive (step 4) into a local Docker volume and start the new image on it.
 
-## 5. Back up
+## 4. Back up
 
 Two complementary backups; take both before merging an upgrade.
 
 **Railway volume backup** (restorable in place, whole volume): in the dashboard,
 `openclaw` service → **Backups** → **Create backup**. Manual backups are limited
-to 50% of the volume size; grow the volume first if needed.
+to 50% of the volume size; grow the volume first if needed. This was not
+available on the Hobby plan, and Railway's backup docs don't name the plans that
+include it. Without it, the OpenClaw archive below is your backup.
 
 **OpenClaw archive** (portable, verified, off-platform):
 
@@ -65,11 +87,10 @@ scp <service-instance-id>@ssh.railway.com:/tmp/openclaw-backup/<archive>.tar.gz 
 (The service instance ID is in the dashboard: ⌘K → **Copy Service Instance
 ID**.) `/tmp` is wiped on redeploy, so copy the archive off first. Always pass
 `--output`: the default is the current directory, `/app`, which the `node` user
-can't write. Archives contain credentials; store them like secrets. Verified
-locally while the Gateway was running; SQLite files belonging to the bundled
-Codex runtime are archived as raw bytes with a warning.
+can't write. Archives contain credentials; store them like secrets. SQLite files
+belonging to the bundled Codex runtime are archived as raw bytes with a warning.
 
-## 6. Deploy
+## 5. Deploy
 
 Merge the PR. On start, OpenClaw's entrypoint runs `openclaw doctor --fix`
 under exclusive state ownership before the Gateway starts, which applies config
@@ -81,7 +102,7 @@ If Doctor can't migrate safely, the container exits with code **78** and Railway
 keeps restarting it. Don't delete state or lock files; see
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#exit-code-78).
 
-## 7–9. Verify
+## 6. Verify
 
 ```bash
 railway ssh --service openclaw -- openclaw --version     # the new version
@@ -113,8 +134,7 @@ therefore "old image + the backup taken before the upgrade":
 
 Anything written after the backup (conversations, pairings, config changes) is
 lost in a rollback; the unmounted volume still has it if you need to recover
-something by hand. **(live-unverified: the restore flow follows Railway's backup
-docs.)**
+something by hand.
 
 Tools you installed or updated on the volume (`~/.local`, Homebrew in
 `/data/linuxbrew`) and Tailscale's node state (`/data/tailscale`) are part of
@@ -131,18 +151,34 @@ without a deploy ([TOOLS.md](TOOLS.md#keeping-tools-current)). To move the
 baseline itself:
 
 - **`gh`, `gog`**: downloaded in `Dockerfile` `RUN` steps, which Dependabot
-  doesn't track. Change the version and both checksums, copied from the
-  release's checksums file (for `gh`:
-  `gh release download v<version> -R cli/cli -p 'gh_*_checksums.txt'`). The
-  build fails if a checksum doesn't match.
+  doesn't track. Change the version and both checksums (amd64 and arm64),
+  copied from the release's checksums file (for `gh`:
+  `gh release download v<version> -R cli/cli -p 'gh_*_checksums.txt'`; for
+  `gog`: `checksums.txt` on the release). The build fails if a checksum doesn't
+  match.
+- **Release watch**: since Dependabot can't see those pins, the weekly
+  `.github/workflows/release-watch.yml` reads `gh_version`, `gog_version`, and
+  `brew_version` out of the `Dockerfile` and compares them with each project's
+  latest GitHub release. It opens one issue, "Pinned tool releases are out of
+  date", listing what is stale, updates it on later runs, and closes it when
+  everything is current. It only reports; run it from the Actions tab
+  (**Run workflow**) to check on demand.
 - **Claude Code**: Dependabot proposes updates to `tools/package-lock.json`;
-  merging one redeploys.
+  merging one redeploys. By hand, change the version in `tools/package.json`
+  and run `npm install --package-lock-only` in `tools/`.
 - **Codex**: follows OpenClaw's own pin, so it moves with OpenClaw upgrades.
 - **Debian packages** (`jq`, `tmux`, ImageMagick): not pinned; every rebuild
   installs Debian's current security updates. Redeploy periodically to pick
-  them up.
+  them up. Because the packages float, rebuilding the same commit later is not
+  byte-reproducible: the pinned images and downloads are identical, the apt
+  layer is not.
 - **Homebrew**: the `Dockerfile` pins the seed copied onto a new volume. An
-  existing volume's Homebrew updates itself and ignores the seed.
+  existing volume's Homebrew updates itself and ignores the seed. It pins the
+  tag (`brew_version`) and the commit that tag points to (`brew_commit`), and
+  the build fails if the clone's `HEAD` isn't that commit, so a moved tag can't
+  change the seed. Get the commit with
+  `git ls-remote https://github.com/Homebrew/brew refs/tags/<tag>` and change
+  both together.
 
 `tests/image.test.sh` checks that each tool runs.
 

@@ -1,0 +1,102 @@
+name: Release watch
+
+# Dependabot tracks the image tags and npm packages but cannot see the pins that
+# are shell variables in Dockerfile RUN steps: gh, gog, and Homebrew. This
+# workflow reads those pins from the Dockerfile, which stays the single source,
+# compares them with the latest GitHub releases, and keeps one issue listing
+# whatever is stale. It only reports; upgrading is a reviewed pull request
+# (documentation/UPGRADING.md).
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Compare pins with latest releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare pins and update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+
+          # Each pin is the first match in the Dockerfile; an empty result means
+          # the Dockerfile changed shape, which fails the run rather than
+          # silently reporting nothing.
+          pinned() {
+            value="$(sed -n "s/^ *$1=\([0-9][0-9.]*\)[;]*.*/\1/p" Dockerfile | head -n 1)"
+            [ -n "$value" ] || { echo "no $1 pin found in Dockerfile" >&2; exit 1; }
+            printf '%s' "$value"
+          }
+          # Tags are v-prefixed for gh and gog but not for Homebrew; the pins
+          # never carry the prefix.
+          latest() {
+            gh release view --repo "$1" --json tagName --jq .tagName | sed 's/^v//'
+          }
+          release_url() {
+            gh release view --repo "$1" --json url --jq .url
+          }
+
+          body_file="$(mktemp)"
+          stale=0
+          check() {
+            name="$1"; repository="$2"; current="$3"
+            newest="$(latest "$repository")"
+            if [ "$current" = "$newest" ]; then
+              echo "$name $current is current"
+            else
+              echo "$name $current is behind $newest"
+              printf -- '- **%s**: pinned %s, latest %s (%s)\n' \
+                "$name" "$current" "$newest" "$(release_url "$repository")" >> "$body_file"
+              stale=$((stale + 1))
+            fi
+          }
+
+          # Plain assignments, so a missing pin aborts the run under set -e;
+          # a failure inside an argument's command substitution would not.
+          gh_pin="$(pinned gh_version)"
+          gog_pin="$(pinned gog_version)"
+          brew_pin="$(pinned brew_version)"
+          check "GitHub CLI (gh)" cli/cli "$gh_pin"
+          check "gog" steipete/gogcli "$gog_pin"
+          check "Homebrew" Homebrew/brew "$brew_pin"
+
+          title="Pinned tool releases are out of date"
+          number="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\"))[0].number // empty")"
+
+          if [ "$stale" = 0 ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "All Dockerfile pins match the latest releases."
+            fi
+            exit 0
+          fi
+
+          {
+            echo "These pins in the Dockerfile are behind the latest GitHub release. Dependabot cannot see them because they are shell variables in RUN steps."
+            echo
+            cat "$body_file"
+            echo
+            echo "To upgrade, follow [documentation/UPGRADING.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/documentation/UPGRADING.md#tool-upgrades): change the version and its checksums (or commit, for Homebrew) together."
+            echo "Last checked by [release-watch](https://github.com/${GITHUB_REPOSITORY}/actions/workflows/release-watch.yml) on $(date -u +%Y-%m-%d)."
+          } > "$body_file.md"
+
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$body_file.md"
+          else
+            gh issue create --title "$title" --body-file "$body_file.md"
+          fi

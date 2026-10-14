@@ -3,9 +3,21 @@
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/openclaw-private-gateway?utm_medium=integration&utm_source=button&utm_campaign=openclaw-private-gateway)
 
 A minimal Railway deployment of the [OpenClaw](https://openclaw.ai) Gateway,
-reachable only through Tailscale.
+reachable only through Tailscale. No public domain, no setup web server: the
+dashboard, the macOS app, and your phone connect privately over your tailnet.
 
-- **OpenClaw 2026.9.8**, the official image pinned by digest. Upgrading OpenClaw
+**What you need:** a Railway account on a paid plan; a Tailscale tailnet with
+MagicDNS and HTTPS certificates turned on, and the Tailscale client running on
+the device you browse from; a Tailscale auth key; and a model provider API key.
+
+**Start with [QUICKSTART.md](documentation/QUICKSTART.md).** It takes you from the
+deploy button to a working dashboard, then pairs the Mac app.
+[DEPLOYMENT.md](documentation/DEPLOYMENT.md) does the same from your own fork
+with Railway Infrastructure as Code (`.railway/railway.ts`).
+
+## How it works
+
+- **OpenClaw 2026.10.3**, the official image pinned by digest. Upgrading OpenClaw
   means changing one `FROM` line.
 - **The Gateway is the main process.** No setup server or reverse proxy. A
   short entrypoint prepares the volume, logs Tailscale in on first boot, and
@@ -13,13 +25,14 @@ reachable only through Tailscale.
   `tailscaled` and relays Railway's health check.
 - **Private by default.** No Railway domain. Tailscale runs in the same
   container, and OpenClaw manages Tailscale Serve itself: the Gateway listens
-  only on loopback, Serve publishes it at `https://openclaw.<tailnet>.ts.net`,
+  only on loopback, Serve publishes it at `https://<machine-name>.<tailnet>.ts.net`,
   and browsers on your tailnet sign in with their Tailscale identity. Nothing
   else in the Railway project can reach it.
-- **One service, two variables.** The template asks for a name for the Gateway
-  and a Tailscale auth key; the Gateway token is generated. The name becomes
-  the tailnet address (`My Gateway` → `https://my-gateway.<tailnet>.ts.net`),
-  so a second deployment gets its own name instead of `openclaw-1`.
+- **One service, two variables.** The template asks for a display name for the Gateway
+  and a Tailscale auth key; the Gateway token is generated. The display name
+  becomes the machine name and so the tailnet address (`My Gateway` →
+  `https://my-gateway.<tailnet>.ts.net`), so a second deployment gets its own
+  name instead of `openclaw-1`.
 - **All state on one volume** at `/data`: OpenClaw's state in `/data/.openclaw`
   (migrated by OpenClaw's own Doctor on every start), Tailscale's node state,
   the home directory, and Homebrew, so the machine identity, tool logins, and
@@ -50,21 +63,12 @@ flowchart LR
     tailscaled --> volume
 ```
 
-## Deploy
-
-**[QUICKSTART.md](documentation/QUICKSTART.md)**: deploy the Railway template,
-give it a Tailscale auth key, then onboard a model provider and pair the Mac
-app. About 15 minutes.
-
-[DEPLOYMENT.md](documentation/DEPLOYMENT.md) does the same from your own fork
-with Railway Infrastructure as Code (`.railway/railway.ts`).
-
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
-| [QUICKSTART.md](documentation/QUICKSTART.md) | Template deploy to a paired Mac app in about 15 minutes |
-| [DEPLOYMENT.md](documentation/DEPLOYMENT.md) | Step-by-step deployment and onboarding; publishing as a Railway template |
+| [QUICKSTART.md](documentation/QUICKSTART.md) | Template deploy to a working dashboard, a model provider, and a paired Mac app |
+| [DEPLOYMENT.md](documentation/DEPLOYMENT.md) | Step-by-step deployment from your own fork and onboarding; cost and teardown |
 | [ARCHITECTURE.md](documentation/ARCHITECTURE.md) | Design, access options compared, why proxy attribution can't fail, what Railway owns |
 | [CONFIGURATION.md](documentation/CONFIGURATION.md) | Every variable and setting, build-time vs runtime, what lives on the volume |
 | [TOOLS.md](documentation/TOOLS.md) | CLI tools for skills, logging them in, keeping them current, adding more |
@@ -74,6 +78,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | [SECURITY.md](documentation/SECURITY.md) | Infrastructure controls, the security audit, recommended agent policy |
 | [UPGRADING.md](documentation/UPGRADING.md) | Upgrades, backups, rollbacks |
 | [TROUBLESHOOTING.md](documentation/TROUBLESHOOTING.md) | Symptoms and fixes |
+| [MAINTAINING.md](documentation/MAINTAINING.md) | For the template's maintainer: publishing and updating the Railway template |
 | [RAILWAY_TEMPLATE.md](documentation/RAILWAY_TEMPLATE.md) | The published template's readme, as shown on the Railway template page |
 | [ACCEPTANCE_CRITERIA.md](documentation/ACCEPTANCE_CRITERIA.md) | What is verified, what still needs a live deployment |
 
@@ -84,6 +89,8 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | `Dockerfile` | OpenClaw image: official base, Tailscale binaries, entrypoint, seed config, skill tools, Homebrew seed |
 | `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop |
 | `scripts/gog-login.sh` | `gog-login`: Google sign-in for the gog skill through the tailnet (see [TOOLS.md](documentation/TOOLS.md#google-gog)) |
+| `scripts/tailscale-hostname.mjs` | Turns the display name into the Tailscale machine name (a DNS label) |
+| `scripts/patch-machine-display-name.mjs` | Build-time patch so OpenClaw's machine picker shows the display name instead of Railway's per-deploy container hostname |
 | `scripts/sidecar.mjs` | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway |
 | `scripts/webhook-relay.mjs` | Opt-in webhook routes on the same port: token check, lockout, size cap |
 | `scripts/as-node.sh` | `as-node <command>`: run a command as `node` from a root `railway ssh` shell |
@@ -93,7 +100,8 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 | `tools/` | Pinned npm tools for skills (Claude Code); Dependabot proposes updates |
 | `.railway/railway.ts` | Railway Infrastructure as Code: one service, one volume |
 | `.env.example` | Runtime variables (documentation only) |
-| `tests/` | Image integration tests, IaC tests |
+| `tests/` | Image integration tests (`image.test.sh`), IaC and template-readme tests, machine-name tests (`tailscale-hostname.test.ts`) |
+| `tests/fixtures/` | Sample files for the image tests (a HEIC photo for the ImageMagick check) |
 | `documentation/` | Guides listed above |
 | `.github/` | CI and Dependabot |
 
@@ -102,6 +110,7 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 ```bash
 npm ci
 npm run typecheck && npm run test:railway-config
+npm run test:scripts            # the machine-name rule; no Docker
 npm run test:image              # needs Docker; builds and exercises the image
 ```
 

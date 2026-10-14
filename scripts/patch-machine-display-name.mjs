@@ -1,4 +1,4 @@
-// OpenClaw 2026.9.8 uses os.hostname() for the Gateway picker label.
+// OpenClaw 2026.10.3 uses os.hostname() for the Gateway picker label.
 // Railway assigns a deployment-specific container hostname. Patch only this
 // display-name fallback; fail the image build if an upgrade changes its shape.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
