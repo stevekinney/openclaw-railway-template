@@ -170,20 +170,14 @@ RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-
  && node /app/openclaw.mjs --version \
  && tailscale version
 
-# HOME is on the volume, so tool logins and settings kept under ~ (gog's Google
-# tokens, Claude Code and Codex sessions) survive redeploys. PATH order, first
-# match wins:
-#   /usr/local/sbin          openclaw and brew wrappers; the OpenClaw CLI always
-#                            matches the image's Gateway and can't be shadowed
-#   /data/home/.local/bin    your tools on the volume: npm -g, Claude Code's
-#                            self-updating native install
-#   /home/linuxbrew/...      Homebrew on the volume
-#   /usr/local/bin, ...      the image's pinned baseline
-# NPM_CONFIG_PREFIX sends `npm install -g` to the volume instead of root-owned
-# /usr/local.
-ENV HOME=/data/home \
-    PATH=/usr/local/sbin:/data/home/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/node/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    NPM_CONFIG_PREFIX=/data/home/.local \
+# Root's environment, for the entrypoint and `railway ssh` shells: HOME and PATH
+# stay off the volume, which node (and so the agent) can write; otherwise a root
+# shell could run a planted ~/.bashrc or a binary that shadows a system one.
+# The Gateway, its tools, and `as-node` commands get node's environment instead,
+# with HOME (/data/home) and npm -g, Claude Code, and Homebrew on the volume;
+# see scripts/as-node.sh.
+ENV HOME=/root \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOMEBREW_NO_ANALYTICS=1 \
     HOMEBREW_NO_ENV_HINTS=1 \
     HOMEBREW_CACHE=/tmp/homebrew
@@ -209,8 +203,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 EXPOSE 8080
 
 # After the entrypoint drops privileges, this is the stock image's own startup:
-# tini (PID 1) -> docker-entrypoint.mjs (runs Doctor migrations) -> Gateway.
-ENTRYPOINT ["openclaw-railway-entrypoint", "tini", "-s", "--", "node", "/app/docker-entrypoint.mjs"]
+# as-node -> tini (PID 1) -> docker-entrypoint.mjs (runs Doctor migrations) -> Gateway.
+# Absolute paths: Docker looks a bare name up on PATH after mounting the volume.
+ENTRYPOINT ["/usr/local/bin/openclaw-railway-entrypoint", "/usr/bin/tini", "-s", "--", "/usr/local/bin/node", "/app/docker-entrypoint.mjs"]
 # --bind, --tailscale, and --auth pin the network-facing settings so a later
 # config edit or onboarding run cannot expose the Gateway differently or make it
 # unauthenticated.

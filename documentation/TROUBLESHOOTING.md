@@ -14,8 +14,10 @@ log.
 | `PORT is 18789, the Gateway's own loopback port` | A `PORT` variable collides with the Gateway. | Delete the `PORT` variable; Railway then injects 8080 for the health relay. |
 | `Tailscale is not logged in (state: NeedsLogin) and TS_AUTHKEY is not set` | First boot without a key, or the machine was removed from the tailnet (its node key no longer works). | Create an auth key and set `TS_AUTHKEY` on `openclaw` ([TAILSCALE.md](TAILSCALE.md)). |
 | `Tailscale login failed; see the error above`, after `invalid key: unable to validate API key` or similar | The key was already used (keys are single-use unless created reusable), expired, or revoked. | Generate a new key and set `TS_AUTHKEY` again. |
-| `state: NeedsMachineAuth`, or `Tailscale login failed` after `tailscale up` times out | Your tailnet requires device approval, and the key wasn't pre-approved. | Approve the machine in the admin console and redeploy, or use a pre-approved key. |
+| `this machine is logged in to Tailscale but waits for approval` | Your tailnet requires device approval, and the key wasn't pre-approved. | Approve the machine on the admin console's Machines page and redeploy, or use a pre-approved key. |
 | `… is set up for the previous layout (a separate tailscale service)` | The volume's config is for the old two-service layout (`gateway.bind: "lan"`, `publicOrigin`, a device-pair `publicUrl`). | Run the four commands the message names, then redeploy. See [UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout). |
+| `… openclaw.json can't be parsed (…)` | The config isn't valid JSON5, so the entrypoint can't run its safety checks on it, and won't start without them. | Fix the file named in the message (`as-node vi /data/.openclaw/openclaw.json` from `railway ssh`), or restore `openclaw.json.last-good` / `.bak` from `/data/.openclaw`, then redeploy. |
+| `/data/home is a symbolic link` (or another state directory) | Something replaced a state directory with a link. The entrypoint runs as root and won't follow it. | From `railway ssh`, replace the link with the directory it points to, then redeploy. |
 | `[tailscale] serve failed: Logged out.`, then the Gateway exits | The Gateway started while Tailscale was logged out. The entrypoint normally logs in first, so this means the login was lost while running. | Redeploy; if the entrypoint then reports `NeedsLogin`, set a new `TS_AUTHKEY`. |
 | `openclaw-railway: tailscaled exited (…); stopping the container` | Tailscale's daemon died; the sidecar stops the container so Railway restarts both. | Nothing if it recovers. If it repeats, read the `tailscaled` lines just before it. |
 | `the entrypoint must start as root` | `RAILWAY_RUN_UID` or a user override is set. | Remove it. The entrypoint drops to `node` itself. |
@@ -45,6 +47,18 @@ files to silence it**; they are the recovery inputs.
   `sleep infinity` runs as `node` through the normal entrypoint and Doctor runs
   from an exec shell. Whether Railway's Start Command replaces only the `CMD`
   (as this assumes) is **live-unverified**.
+
+## Warnings and status lines
+
+| Log line | Meaning | What to do |
+| --- | --- | --- |
+| `openclaw-railway: ready. Open https://….ts.net/ …` | The Gateway answers its startup probe; the deploy is done. | Open that address on a device signed in to your tailnet. |
+| `warning: MagicDNS is off in this tailnet` | The machine has no `….ts.net` name. | Admin console → DNS → enable MagicDNS, then redeploy. |
+| `warning: HTTPS certificates are off in this tailnet` | Serve can't get a certificate, so the dashboard won't load. | Admin console → DNS → enable HTTPS Certificates, then redeploy. |
+| `warning: your tailnet policy lets this machine use Tailscale Funnel` | The policy grants this machine the `funnel` attribute (untagged machines get it by default). OpenClaw doesn't use Funnel here, but anything running as `node` could. | Tag the machine, or narrow the `funnel` grant ([TAILSCALE.md](TAILSCALE.md#1-prepare-the-tailnet)). |
+| `the Tailscale machine name is …, not …; it is set only at first login` | The display name or `TS_HOSTNAME` changed after the machine was created, or Tailscale gave it a suffix. The address follows the machine name. | Rename the machine in the admin console to change the address, or set the variable back. |
+| `Tailscale is logged out …; restarting to log in again with TS_AUTHKEY` | The node key expired, or the machine was removed, while the container ran. The sidecar checks every minute. | Nothing, if the restart logs in. If it then fails with `Tailscale login failed`, set a new `TS_AUTHKEY`. |
+| `Tailscale is logged out …, so the Gateway is unreachable` (every 30 minutes) | Same, with no `TS_AUTHKEY` to log in with. | Set a new `TS_AUTHKEY`; Railway redeploys and the container logs back in. |
 
 ## `railway config plan` proposes a destructive volume change
 
@@ -82,16 +96,16 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Machine has a `-1` suffix (`my-gateway-1`) | The name was already taken, usually by an earlier deployment with the same Gateway name. Everything follows the real name (Serve, origin, QR); only clients you configured by hand still point at the old one. | Remove the stale machine and rename this one in the admin console, or point clients at the suffixed name. `railway ssh --service openclaw -- tailscale status --json` shows the name (`Self.DNSName`). |
-| Deploy stops with `has no letters or digits to make a Tailscale machine name from` | The Gateway's name (`OPENCLAW_MACHINE_DISPLAY_NAME`) is only symbols, emoji, or non-Latin script, so no DNS label can be made from it. | Add letters or digits to the name, or keep it and set `TS_HOSTNAME` (for example `openclaw`). |
+| Machine has a `-1` suffix (`my-gateway-1`) | The name was already taken, usually by an earlier deployment with the same display name. Everything follows the real name (Serve, origin, QR); only clients you configured by hand still point at the old one. | Remove the stale machine and rename this one in the admin console, or point clients at the suffixed name. `railway ssh --service openclaw -- tailscale status --json` shows the name (`Self.DNSName`). |
+| Deploy stops with `has no letters or digits to make a Tailscale machine name from` | The display name (`OPENCLAW_MACHINE_DISPLAY_NAME`) is only symbols, emoji, or non-Latin script, so no DNS label can be made from it. | Add letters or digits to the display name, or keep it and set `TS_HOSTNAME` (for example `openclaw`). |
 | Changed `OPENCLAW_MACHINE_DISPLAY_NAME`, but the address stayed the same | The machine name is chosen only when Tailscale logs in (first boot). | Rename the machine in the Tailscale admin console, then restart the service so OpenClaw picks up the new address. |
-| `curl https://openclaw.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the machine is offline. | Check the policy grant and `tailscale ping openclaw`. |
+| `curl https://<machine-name>.<tailnet>.ts.net` times out | Access policy doesn't allow your device, or the machine is offline. | Check the policy grant and `tailscale ping <machine-name>`. |
 | The first HTTPS request takes ~15 s | A new machine's certificate is being issued. | Nothing; later requests are fast. |
 | HTTPS never works and the Gateway fails to start Serve | Tailnet HTTPS certificates are not enabled. There is no plaintext fallback. | Admin console → DNS → HTTPS Certificates, then redeploy. |
 | Google shows `redirect_uri_mismatch` during `gog-login` | The client is a Desktop app client, or its redirect URI doesn't match the one `gog-login` printed (machine name, `:8443`). | Use a Web application client and register exactly the printed URI. New clients can take a few minutes to take effect. [TOOLS.md](TOOLS.md#google-gog) |
 | `gog-login`'s callback page never loads | The browser isn't on the tailnet, or the access policy doesn't allow port 8443. | Open the URL on a tailnet device; allow `tcp:8443` ([TAILSCALE.md](TAILSCALE.md)). |
 | Machine logged out after months | Untagged machine hit key expiry. | Tag it or disable key expiry, then set a new `TS_AUTHKEY` and redeploy. |
-| Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the image's `TS_DEBUG_MTU=1236` is in effect and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://openclaw.<tailnet>.ts.net/healthz` (expect well under 0.2 s after the first request). |
+| Everything works but is slow: HTTPS handshakes take ~1 s, pages load at ~10 KB/s, while `tailscale ping` is fast | Tunnel packets larger than Railway's 1316-byte MTU are being lost. | Make sure the image's `TS_DEBUG_MTU=1236` is in effect and that no variable overrides it. Check with `curl -w '%{time_appconnect}\n' -o /dev/null -s https://<machine-name>.<tailnet>.ts.net/healthz` (expect well under 0.2 s after the first request). |
 
 ## Connecting
 
@@ -142,7 +156,7 @@ the restart policy is `ALWAYS`, not `ON_FAILURE`.
 | `gog-login`: `state mismatch`, and the callback page then shows `404 page not found` | `gog` accepts one callback per run. A callback from an earlier attempt (a stale tab, a reload) arrived first, so `gog` exited and the temporary route closed. | Close old `…:8443/oauth2/callback` tabs, rerun `gog-login`, and open only the new URL. |
 | `gog-login`: `no refresh token received; try again with --force-consent` | The account already granted these scopes to the project, so Google skipped the consent screen. | Rerun `gog-login` with `--force-consent`. |
 | Gmail watcher can't read its token | `GOG_KEYRING_PASSWORD` isn't set as a Railway variable; the watcher runs without a terminal. | Set it to `gog`'s keyring password. |
-| A portal URL (`https://openclaw.<tailnet>.ts.net:<port>/`) times out, while the dashboard works | The access policy allows 443 but not the portal's port. | Allow `tcp:32768-38768` in the grant ([TAILSCALE.md](TAILSCALE.md#portals)). |
+| A portal URL (`https://<machine-name>.<tailnet>.ts.net:<port>/`) times out, while the dashboard works | The access policy allows 443 but not the portal's port. | Allow `tcp:32768-38768` in the grant ([TAILSCALE.md](TAILSCALE.md#portals)). |
 | A portal says "This portal is private. Open it from the OpenClaw Control UI." (401) | The link lacks the portal token, or the portal was reopened with a new one. | Open it from the dashboard's Portals page or use the full link the agent gave. |
 | A portal shows "Waiting for the app on port …" | The development server isn't running; a server started in the background by an agent turn run from the CLI didn't outlive the turn. | Start the server again (or ask the agent from the dashboard or a chat); the portal reconnects. |
 

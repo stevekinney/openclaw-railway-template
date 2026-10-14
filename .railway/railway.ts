@@ -4,7 +4,7 @@
 // `railway config apply`; deploys never read it. See documentation/DEPLOYMENT.md.
 //
 // Secrets never appear here. Variables marked preserve() keep whatever value
-// is already set in Railway, so set them with `railway variables` (or the
+// is already set in Railway, so set them with `railway variable set` (or the
 // dashboard) and list every variable you add to a service in this file.
 import { defineRailway, github, preserve, project, service, volume } from "railway/iac";
 
