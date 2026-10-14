@@ -74,6 +74,22 @@ In the [admin console](https://login.tailscale.com/admin):
    connections to anything else on your tailnet even if the Gateway is
    compromised. Only ports with a Serve route answer: the Gateway listens on
    loopback, so allowing the portal range exposes nothing until a portal opens.
+
+   Also check who your policy lets use **Funnel**, which publishes a port on the
+   public internet. A machine can use it only if the policy grants it the
+   `funnel` node attribute, and new tailnets grant it to every member's
+   machines:
+
+   ```jsonc
+   "nodeAttrs": [{ "target": ["autogroup:member"], "attr": ["funnel"] }]
+   ```
+
+   A tagged node isn't a member's machine, so this doesn't reach
+   `tag:openclaw`; never add `tag:openclaw` to a `funnel` target. An untagged
+   node is yours, so the default grant covers it: tag it, or narrow that target
+   to the people who need Funnel. This is the only thing that keeps Funnel off
+   (see [Operations](#operations)).
+
 3. **Auth key**: create one under **Settings → Keys → Generate auth key**, with
    the settings below.
 
@@ -170,8 +186,12 @@ They work with no extra setup, through OpenClaw-managed Serve:
   production on 2026-10-08.)
 - **Node key expiry.** See [auth key settings](#auth-key-settings): tag the
   machine or disable its key expiry, or it drops off the tailnet after 180 days.
-- **Never enable Funnel** for this node. OpenClaw's Funnel mode would make the
-  Gateway public; the `CMD` pins `--tailscale serve`.
+- **Never enable Funnel** for this node. The `CMD` pins `--tailscale serve`, so
+  OpenClaw itself never uses Funnel, but `tailscaled` runs as `node`, and so does
+  anything the agent runs: `tailscale funnel` from the agent's shell would work
+  if the tailnet allowed it. Nothing inside the container can prevent that, so
+  the control is the `funnel` node attribute in your tailnet policy
+  ([above](#1-prepare-the-tailnet)): keep it away from this node.
 - **Upgrading Tailscale.** Dependabot proposes new `tailscale/tailscale` tags for
   the `FROM … AS tailscale` line in the `Dockerfile`; the image test checks the
   installed version matches the pin.

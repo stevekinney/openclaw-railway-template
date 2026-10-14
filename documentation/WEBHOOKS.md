@@ -33,11 +33,19 @@ flowchart LR
   relay checks the token itself and forwards only authenticated requests.
 - `POST /gmail-pubsub?token=<push token>` goes to OpenClaw's Gmail watcher,
   which checks its own push token and then calls `/hooks/gmail` over loopback.
-- Every other path and method is 404. Bodies over 1 MiB get 413. After 20
-  failed attempts in a minute, a caller is locked out for 10 minutes (429),
-  keyed on the address Railway's edge reports (`X-Real-IP`), which callers
-  can't spoof. Forwarded, Railway, and Tailscale headers are stripped before
-  anything reaches the Gateway.
+- Every other path and method is 404, and a malformed request is 400. A body
+  over 1 MiB (or a `Content-Length` that says so) gets 413 at once, without the
+  rest being read. After 20 failed hook attempts in a minute, a caller is
+  locked out of the hook routes for 10 minutes (429), keyed on the address
+  Railway's edge appends to `X-Forwarded-For`, which callers can't change.
+  Rejected Gmail pushes don't count: Google's push addresses are shared, and
+  the watcher checks its token anyway.
+- Hook requests keep the sender's own headers, so a transform can check a
+  signature such as `X-Hub-Signature-256`. Headers that could make a public
+  caller look like a tailnet user, a proxy, or a signed-in browser are
+  stripped before anything reaches the Gateway: forwarded and Railway headers,
+  anything with `tailscale` in its name, `Cookie`, `Origin`, `Referer`, and
+  OpenClaw's own `x-openclaw-*` headers.
 - The health checks (`/healthz`, `/readyz`, `/startupz`) are public on that
   domain too. They return only an aggregate status.
 
