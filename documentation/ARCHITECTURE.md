@@ -138,7 +138,13 @@ Agent-level policy (tools, channel allowlists) is the operator's choice; see
    default path so `tailscale` and OpenClaw need no flags. If `tailscaled` exits,
    the sidecar sends SIGTERM to PID 1 (`tini`), the Gateway shuts down cleanly,
    and the container stops, so Railway restarts Tailscale and the Gateway
-   together (≈2 s, verified).
+   together (≈2 s, verified). Once the Gateway answers `/startupz`, the sidecar
+   logs `ready` with the dashboard address, then checks every minute that
+   Tailscale is still logged in. After three minutes logged out (an expired
+   node key, a machine removed in the admin console), it restarts the container
+   if `TS_AUTHKEY` is set, so the entrypoint logs back in; otherwise it logs what
+   to do every 30 minutes. No request to `PORT` can stop the sidecar: malformed
+   requests are answered, and unexpected errors are logged.
 2. **Relay the deploy health check.** Railway's check comes in over the
    container's network and can't reach a loopback-only Gateway, and OpenClaw has
    no separate probe port. The relay listens on `PORT` (8080) and forwards only

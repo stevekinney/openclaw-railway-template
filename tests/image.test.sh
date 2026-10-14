@@ -53,7 +53,7 @@ cleanup() {
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
   docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
   docker rm -f "$gateway" "$watchdog" "$live" "$live_twin" >/dev/null 2>&1 || true
-  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-link-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
+  docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-link-state" "$run_id-bad-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -237,14 +237,19 @@ docker run --rm -v "$run_id-old-state:/data" --entrypoint sh "$image" -c '
 expect_refusal "refuses a config from the previous two-service layout and names the migration" "openclaw config set gateway.bind loopback" \
   -v "$run_id-old-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 
-# OpenClaw's Gmail watcher would run `tailscale funnel` on port 443.
+# OpenClaw's Gmail watcher would run `tailscale funnel` on port 443. The config
+# has a comment, which OpenClaw's JSON5 reader accepts and JSON.parse doesn't:
+# the check must still see the setting.
 docker run --rm -v "$run_id-gmail-state:/data" --entrypoint sh "$image" -c '
   mkdir -p /data/.openclaw && node -e "
     const config = JSON.parse(require(\"node:fs\").readFileSync(\"/etc/openclaw-railway/openclaw.seed.json\", \"utf8\"));
     config.hooks = { gmail: { tailscale: { mode: \"funnel\" } } };
-    require(\"node:fs\").writeFileSync(\"/data/.openclaw/openclaw.json\", JSON.stringify(config));"' >/dev/null
-expect_refusal "refuses hooks.gmail.tailscale.mode funnel, which would publish port 443" "hooks.gmail.tailscale.mode is funnel" \
+    require(\"node:fs\").writeFileSync(\"/data/.openclaw/openclaw.json\", \"// edited by hand\\n\" + JSON.stringify(config, null, 2));"' >/dev/null
+expect_refusal "refuses hooks.gmail.tailscale.mode funnel, which would publish port 443, in a config with comments" "hooks.gmail.tailscale.mode is funnel" \
   -v "$run_id-gmail-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
+docker run --rm -v "$run_id-bad-state:/data" --entrypoint sh "$image" -c 'mkdir -p /data/.openclaw && echo "{ not json" > /data/.openclaw/openclaw.json'
+expect_refusal "refuses a config it can't parse instead of skipping its checks" "openclaw.json can't be parsed" \
+  -v "$run_id-bad-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token"
 # node owns /data and could swap a state directory for a link to a system one.
 docker run --rm -v "$run_id-link-state:/data" --entrypoint ln "$image" -s /usr/local/bin /data/home
 expect_refusal "refuses a state directory replaced with a symbolic link" "/data/home is a symbolic link" \
@@ -271,6 +276,8 @@ docker run --rm -v "$run_id-state:/data" --entrypoint sh "$image" -c '
   touch /data/planted.log && chown 1000:1000 /data/planted.log && chmod 666 /data/planted.log'
 start_gateway
 check "/startupz returns 200 through the health relay" 'wait_for_startup'
+check "the sidecar logs when the Gateway is ready" \
+  'sleep 3; docker logs "$gateway" 2>&1 | grep -x "openclaw-railway: ready."'
 check "the baseline config is written on first boot" \
   'docker logs "$gateway" 2>&1 | grep -F "created /data/.openclaw/openclaw.json from the baseline config"'
 check "the config is in local mode with an env-referenced token" \
@@ -477,7 +484,8 @@ check "the container stops when tailscaled dies, so Railway restarts both" \
 if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   log "live: Tailscale Serve on a real tailnet"
   docker run -d --name "$live" -v "$run_id-live-state:/data" -e OPENCLAW_GATEWAY_TOKEN="$token" \
-    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e OPENCLAW_MACHINE_DISPLAY_NAME="$live_display_name" "$image" >/dev/null
+    -e TS_AUTHKEY="$TAILSCALE_TEST_AUTHKEY" -e OPENCLAW_MACHINE_DISPLAY_NAME="$live_display_name" \
+    -e OPENCLAW_RAILWAY_TEST_TAILSCALE_CHECK_MS=2000 "$image" >/dev/null
   attempt=0
   until docker logs "$live" 2>&1 | grep -qE "serve enabled|serve failed" || [ "$attempt" -ge 90 ]; do
     sleep 2
@@ -493,6 +501,15 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
     'docker logs "$live" 2>&1 | grep -F "serve enabled: https://$live_name/"'
   check "the entrypoint logs the Gateway's tailnet address" \
     'docker logs "$live" 2>&1 | grep -F "the Gateway will be at https://$live_name/"'
+  live_ready_count() { docker logs "$live" 2>&1 | grep -cF "ready. Open https://$live_name/" || true; }
+  attempt=0
+  until [ "$(live_ready_count)" -ge 1 ] || [ "$attempt" -ge 30 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  check "the sidecar logs the dashboard address once the Gateway is ready" '[ "$(live_ready_count)" = 1 ]'
+  check "the Gateway runs with no_new_privs on a real tailnet too" \
+    'docker exec "$live" sh -c "grep -x \"NoNewPrivs:.1\" /proc/\$(pgrep -f openclaw-gateway | head -1)/status"'
   check "the auth key is not in the Gateway's environment" \
     '! docker exec -u node "$live" sh -c "tr \"\\0\" \"\\n\" < /proc/\$(pgrep -f openclaw-gateway | head -1)/environ" | grep -F TS_AUTHKEY'
   check "the auth key is not left in a file" '! docker exec "$live" grep -rlF "$TAILSCALE_TEST_AUTHKEY" /tmp /data'
@@ -560,7 +577,30 @@ if [ -n "${TAILSCALE_TEST_AUTHKEY:-}" ]; then
   done
   check "killing tailscaled stops the whole container" '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ]'
   docker start "$live" >/dev/null
-  sleep 15
+  attempt=0
+  until [ "$(live_ready_count)" -ge 3 ] || [ "$attempt" -ge 60 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  # Logged out while running, as when the node key expires or the machine is
+  # removed in the admin console: the sidecar notices and restarts the
+  # container, which logs back in with TS_AUTHKEY.
+  docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
+  attempt=0
+  until [ "$(docker inspect -f '{{.State.Running}}' "$live")" = false ] || [ "$attempt" -ge 30 ]; do
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  check "a container logged out of Tailscale while running stops so it can log in again" \
+    '[ "$(docker inspect -f "{{.State.Running}}" "$live")" = false ] && docker logs "$live" 2>&1 | grep -F "Tailscale is logged out"'
+  docker start "$live" >/dev/null
+  attempt=0
+  until [ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale as")" -ge 2 ] || [ "$attempt" -ge 60 ]; do
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  check "after that restart it logs in again with TS_AUTHKEY" \
+    '[ "$(docker logs "$live" 2>&1 | grep -c "logged in to Tailscale as")" = 2 ]'
 else
   log "live tier skipped (set TAILSCALE_TEST_AUTHKEY to a reusable, ephemeral Tailscale auth key to run it)"
 fi

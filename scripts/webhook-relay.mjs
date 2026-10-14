@@ -14,36 +14,49 @@
 // The relay checks the hooks token itself and forwards only authenticated hook
 // requests, so failed attempts never reach the Gateway: every relayed request
 // comes from loopback, and the Gateway would otherwise count all public callers
-// as one client. Failures are limited here, per caller. Forwarded, Railway, and Tailscale
-// headers are stripped: the Gateway rejects proxy-shaped requests on its
-// ordinary listener, and public callers must never look like tailnet users.
-import { timingSafeEqual } from "node:crypto";
+// as one client. Failures are limited here, per caller; Gmail pushes are not
+// counted, since Google's addresses are shared and its push retries.
+//
+// Hook requests keep the sender's own headers, because transforms check
+// signatures such as X-Hub-Signature, but never ones that could make a public
+// caller look like a tailnet user, a proxy, or a browser session: forwarded,
+// Railway, and Tailscale headers, cookies, origins, and OpenClaw's own.
+import { createHash, timingSafeEqual } from "node:crypto";
 
-const strippedHeader = /^(host|connection|keep-alive|transfer-encoding|upgrade|te|trailer|proxy-.*|content-length|forwarded|x-forwarded-.*|x-real-ip|true-client-ip|cf-connecting-ip|x-railway-.*|x-envoy-.*|tailscale-.*)$/i;
+const strippedHeader = /^(host|connection|keep-alive|transfer-encoding|upgrade|te|trailer|proxy-.*|content-length|forwarded|via|x-forwarded-.*|x-real-ip|true-client-ip|cf-connecting-ip|x-railway-.*|x-envoy-.*|.*tailscale.*|cookie|origin|referer|x-openclaw-.*)$/i;
 const failureWindowMs = 60_000;
 const maxFailures = 20;
 const lockoutMs = 10 * 60_000;
+const maxTrackedCallers = 10_000;
 
+// Compares digests, so neither the time taken nor an early length check
+// reveals anything about the secret.
 function sameSecret(candidate, secret) {
-  const a = Buffer.from(candidate);
-  const b = Buffer.from(secret);
-  return a.length === b.length && timingSafeEqual(a, b);
+  const digest = (value) => createHash("sha256").update(value).digest();
+  return timingSafeEqual(digest(candidate), digest(secret));
 }
 
-// Rejects with status 413 past the limit, but keeps draining the request so
-// the caller receives the response.
+// Rejects with status 413 as soon as the body passes the limit (or declares a
+// larger Content-Length) without reading the rest.
 function readBody(request, limit) {
   return new Promise((resolve, reject) => {
+    const tooLarge = () => Object.assign(new Error("body too large"), { status: 413 });
+    if (Number(request.headers["content-length"]) > limit) {
+      reject(tooLarge());
+      return;
+    }
     const chunks = [];
     let size = 0;
     request.on("data", (chunk) => {
       size += chunk.length;
-      if (size <= limit) chunks.push(chunk);
+      if (size <= limit) {
+        chunks.push(chunk);
+        return;
+      }
+      request.pause();
+      reject(tooLarge());
     });
-    request.on("end", () => {
-      if (size > limit) reject(Object.assign(new Error("body too large"), { status: 413 }));
-      else resolve(Buffer.concat(chunks));
-    });
+    request.on("end", () => resolve(Buffer.concat(chunks)));
     request.on("error", reject);
   });
 }
@@ -62,6 +75,13 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
   }
   function recordResult(caller, status, now) {
     if (status !== 401 && status !== 403) return;
+    if (failures.size >= maxTrackedCallers && !failures.has(caller)) {
+      for (const [key, entry] of failures) {
+        if (entry.lockedUntil <= now && now - entry.since > failureWindowMs) failures.delete(key);
+      }
+      // Still full: every entry is current. Forget the oldest rather than grow.
+      if (failures.size >= maxTrackedCallers) failures.delete(failures.keys().next().value);
+    }
     const entry = failures.get(caller) ?? { count: 0, since: now, lockedUntil: 0 };
     if (now - entry.since > failureWindowMs) Object.assign(entry, { count: 0, since: now });
     entry.count += 1;
@@ -77,10 +97,11 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
       response.writeHead(400).end();
       return;
     }
-    // Railway's edge sets X-Real-IP and appends the caller to X-Forwarded-For;
-    // a client-supplied X-Forwarded-For value comes first, so use the last.
+    // Railway's edge appends the caller to X-Forwarded-For, after anything the
+    // client sent, so only the last entry is trustworthy. (X-Real-IP is not
+    // used: a request that didn't come through the edge could set it freely.)
     const forwarded = String(request.headers["x-forwarded-for"] ?? "").split(",").at(-1).trim();
-    const caller = String(request.headers["x-real-ip"] ?? "").trim() || forwarded || String(request.socket.remoteAddress ?? "");
+    const caller = forwarded || String(request.socket.remoteAddress ?? "");
     const now = Date.now();
     let target;
     const headers = {};
@@ -89,11 +110,12 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
       response.writeHead(404).end();
       return;
     }
-    if (isLocked(caller, now)) {
+    const gmail = url.pathname === "/gmail-pubsub";
+    if (!gmail && isLocked(caller, now)) {
       response.writeHead(429, { "retry-after": String(lockoutMs / 1000) }).end("too many failed attempts\n");
       return;
     }
-    if (url.pathname === "/gmail-pubsub") {
+    if (gmail) {
       target = `http://127.0.0.1:${gmailPort}${url.pathname}${url.search}`;
       if (request.headers["content-type"]) headers["content-type"] = request.headers["content-type"];
     } else if (url.pathname.startsWith(`${hooksPath}/`)) {
@@ -118,7 +140,9 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
       }
       headers.authorization = `Bearer ${hooksToken}`;
       delete headers["x-openclaw-token"];
-      if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      // Encoded slashes and backslashes too: the Gateway might decode them
+      // into a different hook path than the one checked here.
+      if (segments.some((segment) => segment === "" || segment === "." || segment === ".." || /%(2f|5c)|\\/i.test(segment))) {
         response.writeHead(404).end();
         return;
       }
@@ -136,7 +160,7 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
         body,
         signal: AbortSignal.timeout(120_000),
       });
-      recordResult(caller, upstream.status, Date.now());
+      if (!gmail) recordResult(caller, upstream.status, Date.now());
       const responseHeaders = {};
       for (const name of ["content-type", "retry-after"]) {
         const value = upstream.headers.get(name);
@@ -146,7 +170,11 @@ export function createWebhookHandler({ gatewayPort, gmailPort, hooksPath = "/hoo
       response.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (error) {
       const status = error.status ?? 502;
+      // After a 413 the rest of the body is never read; close the connection
+      // once the response is out instead of keeping it for another request.
+      if (status === 413) response.setHeader("connection", "close");
       response.writeHead(status).end(status === 413 ? "request body too large\n" : "upstream unavailable\n");
+      if (status === 413) response.on("finish", () => request.destroy());
     }
   };
 }
