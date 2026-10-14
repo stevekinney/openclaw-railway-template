@@ -8,10 +8,17 @@ on:
 permissions:
   contents: read
 
+# One run per ref. A new push to a pull request cancels the run it replaces;
+# runs on main finish, so every merge gets a complete result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   static:
     name: Static checks
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -27,19 +34,32 @@ jobs:
         run: npm run test:scripts
       - name: Validate JSON configuration
         run: jq empty config/openclaw.seed.json
-      - name: Check sidecar scripts parse
-        run: node --check scripts/sidecar.mjs && node --check scripts/webhook-relay.mjs && node --check scripts/tailscale-hostname.mjs
+      - name: Check scripts parse
+        run: |
+          node --check scripts/sidecar.mjs
+          node --check scripts/webhook-relay.mjs
+          node --check scripts/tailscale-hostname.mjs
+          node --check scripts/patch-machine-display-name.mjs
+      # The linter images are pinned by digest so they can't change under CI;
+      # the tag stays in a comment for readers. Dependabot doesn't read docker
+      # run commands in workflow files, so bump these by hand.
       - name: ShellCheck
         run: |
-          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \
+          # koalaman/shellcheck:v0.11.0
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
             scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh scripts/gog-login.sh tests/image.test.sh
       - name: Hadolint
         run: |
-          docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+          # hadolint/hadolint:v2.15.1
+          docker run --rm -i hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d < Dockerfile
 
+  # Build and test only after the cheap checks pass, so a lint failure doesn't
+  # spend several minutes on an image build.
   images:
     name: Build and test images
+    needs: static
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build, start, and exercise the image
@@ -49,3 +69,17 @@ jobs:
           # When set, the live tier logs a node in to the tailnet. Dependabot and
           # fork pull requests don't receive secrets, so it is skipped there.
           TAILSCALE_TEST_AUTHKEY: ${{ secrets.TAILSCALE_TEST_AUTHKEY }}
+
+  # Build only, no tests. The gh and gog installs take a different branch on
+  # arm64 (their own checksums), and the job above only ever runs amd64, so a
+  # wrong arm64 checksum would otherwise surface on someone's arm64 machine.
+  # GitHub's hosted arm64 runners build natively, so no emulation is needed.
+  arm64:
+    name: Build arm64 image
+    needs: static
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image for linux/arm64
+        run: docker build --platform linux/arm64 --tag openclaw-railway-template:arm64 .
