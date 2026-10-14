@@ -63,7 +63,7 @@ trap cleanup EXIT INT TERM
 # The Gateway without Tailscale: loopback-only, reachable only from inside.
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 \
+    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_DEBUG=1 \
     -e OPENCLAW_RAILWAY_WEBHOOKS=on -e OPENCLAW_HOOKS_TOKEN="$hooks_token" \
     "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
 }
