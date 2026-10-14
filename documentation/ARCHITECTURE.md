@@ -43,7 +43,7 @@ binaries, and the tools skills need:
 - `scripts/sidecar.mjs` runs `tailscaled` and relays Railway's health check
   (below).
 - `tailscale` and `tailscaled`, copied from the pinned
-  `tailscale/tailscale:v1.102.5` image in a multi-stage build. Dependabot tracks
+  `tailscale/tailscale:v1.104.1` image in a multi-stage build. Dependabot tracks
   that `FROM` line along with OpenClaw's.
 - `scripts/as-node.sh`, plus `openclaw` and `brew` wrappers built on it, run
   commands typed in a root `railway ssh` shell as `node`, so operator commands

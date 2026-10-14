@@ -289,7 +289,7 @@ reported `gateway.probe_failed` on every 2026.9.8 install
 
 | Check | Command | Expected |
 | --- | --- | --- |
-| Version | `railway ssh --service openclaw -- openclaw --version` | `OpenClaw 2026.9.8` |
+| Version | `railway ssh --service openclaw -- openclaw --version` | `OpenClaw 2026.10.3` |
 | Gateway health | `railway ssh --service openclaw -- openclaw health` | OK |
 | Deep readiness | `curl -fsS https://openclaw.<tailnet>.ts.net/readyz` (tailnet device) | `{"ready":true}` |
 | No public exposure | Railway dashboard → `openclaw` → Settings → Networking | no domains, no TCP proxy |
@@ -317,7 +317,7 @@ variable if you confirm. So:
 
 Turn on scheduled volume backups in the dashboard (`openclaw` → **Backups** →
 Daily and Weekly). The volume holds the Tailscale node key too, so a restore
-brings back the same machine. See [UPGRADING.md](UPGRADING.md#5-back-up) for
+brings back the same machine. See [UPGRADING.md](UPGRADING.md#4-back-up) for
 on-demand backups and restores.
 
 ## Maintaining the Railway template

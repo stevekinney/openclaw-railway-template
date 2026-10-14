@@ -2,12 +2,12 @@
 
 # Tailscale runs inside this container, next to the Gateway; only its two
 # binaries are taken from the official image. Dependabot tracks this pin.
-FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
+FROM tailscale/tailscale:v1.104.1@sha256:87c55d6be56ad85b3d8bceca5f87f73de288c609131460dd1be1874c250cc41d AS tailscale
 
 # The OpenClaw release this template deploys. This line is the single source of
 # truth for the version: an upgrade changes the tag and digest together and
 # nothing else. See documentation/UPGRADING.md.
-FROM ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0ded1dd76939b2bf4d67ef2d13247b8b160aa5666331d4a0b0e58811182cbb8
+FROM ghcr.io/openclaw/openclaw:2026.10.3@sha256:70b8dbd23f8d27a206f43f9828fdebc87289e50d56dc55177354c9270d764026
 
 # Railway mounts volumes owned by root, so the container starts as root only
 # long enough for scripts/entrypoint.sh to prepare /data. The entrypoint then
@@ -69,11 +69,11 @@ RUN apt-get update \
 # gog, the Google Workspace CLI for the gog skill. Pinned release, verified
 # against the project's published checksums.
 RUN set -eu; \
-    gog_version=0.43.0; \
+    gog_version=0.44.0; \
     architecture="$(dpkg --print-architecture)"; \
     case "$architecture" in \
-      amd64) checksum=a16d4b8b917e36b96b09b30ecb7a5049d06ff1e88b856a101eec12b86b33fe05 ;; \
-      arm64) checksum=f66e3c9ab7664b7633d57d2d5303e0db75deb4045e1b32c3493c0d8ba68a70f7 ;; \
+      amd64) checksum=9e40b7e51be9162e5ab92d255376257e4d594e9e64dc360fffccd85ba4e1c0c0 ;; \
+      arm64) checksum=0346149cac6630996c69911ac7366c3c1a36d8835b23e985e90c3f8d25c7ab65 ;; \
       *) echo "no gog checksum for $architecture" >&2; exit 1 ;; \
     esac; \
     archive="/tmp/gogcli_${gog_version}_linux_${architecture}.tar.gz"; \
@@ -116,15 +116,24 @@ RUN npm ci --prefix /opt/tools --omit=dev --no-audit --no-fund \
 # the volume and update themselves; the image only pins the starting point.
 # Installed as node (Homebrew refuses root), and run once so its portable Ruby
 # is vendored into the seed and first boot needs no network.
+# A git tag can be moved after the fact, so the build also checks the commit the
+# tag resolves to against the one recorded here when the pin was chosen
+# (`git ls-remote https://github.com/Homebrew/brew refs/tags/<tag>`). Shell
+# variables, not ARGs, like the other pins.
 RUN install -d -o node -g node /home/linuxbrew
 # hadolint ignore=DL3066
 USER node
-RUN git clone --depth 1 --branch 7.0.8 https://github.com/Homebrew/brew /home/linuxbrew/.linuxbrew/Homebrew \
- && mkdir /home/linuxbrew/.linuxbrew/bin \
- && ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew \
- && HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew vendor-install ruby \
- && HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew --version \
- && rm -rf /tmp/.cache
+RUN set -eu; \
+    brew_version=7.0.9; \
+    brew_commit=cdc1ca503231b9a96da64526774915d913c3ec9f; \
+    git clone --depth 1 --branch "$brew_version" https://github.com/Homebrew/brew /home/linuxbrew/.linuxbrew/Homebrew; \
+    [ "$(git -C /home/linuxbrew/.linuxbrew/Homebrew rev-parse HEAD)" = "$brew_commit" ] \
+      || { echo "Homebrew $brew_version is not commit $brew_commit" >&2; exit 1; }; \
+    mkdir /home/linuxbrew/.linuxbrew/bin; \
+    ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; \
+    HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew vendor-install ruby; \
+    HOME=/tmp HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew --version; \
+    rm -rf /tmp/.cache
 # Back to root for the entrypoint, which drops to node itself.
 # hadolint ignore=DL3002,DL3066
 USER root
@@ -133,7 +142,7 @@ RUN mv /home/linuxbrew/.linuxbrew /opt/homebrew-seed \
 
 COPY --from=tailscale /usr/local/bin/tailscale /usr/local/bin/tailscaled /usr/local/bin/
 
-# The Gateway's name in OpenClaw's machine picker. OpenClaw 2026.9.8 falls back
+# The Gateway's name in OpenClaw's machine picker. OpenClaw 2026.10.3 falls back
 # to the container hostname, which Railway changes on every deploy; this patch
 # reads OPENCLAW_MACHINE_DISPLAY_NAME first. The template asks for it, and the
 # entrypoint derives the Tailscale machine name from it (tailscale-hostname.mjs);

@@ -5,7 +5,7 @@
 A minimal Railway deployment of the [OpenClaw](https://openclaw.ai) Gateway,
 reachable only through Tailscale.
 
-- **OpenClaw 2026.9.8**, the official image pinned by digest. Upgrading OpenClaw
+- **OpenClaw 2026.10.3**, the official image pinned by digest. Upgrading OpenClaw
   means changing one `FROM` line.
 - **The Gateway is the main process.** No setup server or reverse proxy. A
   short entrypoint prepares the volume, logs Tailscale in on first boot, and

@@ -9,13 +9,13 @@ For a copyable list of the runtime variables, see [`.env.example`](../.env.examp
 
 | Setting | Where | Value |
 | --- | --- | --- |
-| OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.9.8@sha256:d0de…` — the only version pin |
+| OpenClaw version | `Dockerfile` `FROM` line | `ghcr.io/openclaw/openclaw:2026.10.3@sha256:70b8…` — the only version pin |
 | `HOME` | `Dockerfile` | `/data/home`, on the volume, so tool logins and settings under `~` persist. See [TOOLS.md](TOOLS.md). |
 | Skill tools | `Dockerfile`, `tools/package.json` | `gog`, `claude`, `codex`, `jq`, `tmux`, ImageMagick as a pinned baseline; see [TOOLS.md](TOOLS.md). |
-| Homebrew | `Dockerfile` (seed), `/data/linuxbrew` | Homebrew 7.0.8 seeded onto the volume on first boot, then self-updating. `/home/linuxbrew/.linuxbrew` is a symlink to it. |
+| Homebrew | `Dockerfile` (seed), `/data/linuxbrew` | Homebrew 7.0.9 seeded onto the volume on first boot, then self-updating. `/home/linuxbrew/.linuxbrew` is a symlink to it. |
 | `PATH`, `NPM_CONFIG_PREFIX` | `Dockerfile` | `openclaw`/`brew` wrappers, then `~/.local/bin`, then Homebrew, then the image. `npm install -g` writes to `~/.local` on the volume. |
 | GitHub CLI | `Dockerfile` `RUN` step | `gh` 2.102.0, checksum-verified. Needed for **Settings → Profile → GitHub connections**; OpenClaw stores each connection under `/data/.openclaw/credentials/github/`, so connections persist. |
-| Tailscale version | `Dockerfile` `FROM … AS tailscale` line | `tailscale/tailscale:v1.102.5@sha256:c507…`; only the `tailscale` and `tailscaled` binaries are copied in |
+| Tailscale version | `Dockerfile` `FROM … AS tailscale` line | `tailscale/tailscale:v1.104.1@sha256:87c5…`; only the `tailscale` and `tailscaled` binaries are copied in |
 | `OPENCLAW_HOME` | `Dockerfile` | `/data` → state at `/data/.openclaw` |
 | `OPENCLAW_GATEWAY_PORT` | `Dockerfile` | `18789`, on loopback only |
 | `OPENCLAW_SUPERVISOR_MODE` | `Dockerfile` | `external` — Railway owns the process lifecycle; OpenClaw refuses self-update and service installs, and restarts by exiting cleanly |
