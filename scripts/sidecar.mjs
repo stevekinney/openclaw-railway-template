@@ -96,12 +96,13 @@ function watchTailscale() {
   const intervalMs = Number(process.env.OPENCLAW_RAILWAY_TEST_TAILSCALE_CHECK_MS) || 60_000;
   let loggedOutChecks = 0;
   let lastWarning = 0;
-  setInterval(async () => {
+  const timer = setInterval(async () => {
     const state = (await tailscaleStatus())?.BackendState;
     loggedOutChecks = state === "NeedsLogin" || state === "NeedsMachineAuth" ? loggedOutChecks + 1 : 0;
     if (loggedOutChecks < 3) return;
     if (canLogIn && state === "NeedsLogin") {
       console.error("openclaw-railway: Tailscale is logged out (the node key expired or the machine was removed); restarting to log in again with TS_AUTHKEY");
+      clearInterval(timer);
       process.kill(1, "SIGTERM");
     } else if (Date.now() - lastWarning > 30 * 60_000) {
       lastWarning = Date.now();
