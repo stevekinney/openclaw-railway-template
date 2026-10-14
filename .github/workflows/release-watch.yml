@@ -66,9 +66,14 @@ jobs:
             fi
           }
 
-          check "GitHub CLI (gh)" cli/cli "$(pinned gh_version)"
-          check "gog" steipete/gogcli "$(pinned gog_version)"
-          check "Homebrew" Homebrew/brew "$(pinned brew_version)"
+          # Plain assignments, so a missing pin aborts the run under set -e;
+          # a failure inside an argument's command substitution would not.
+          gh_pin="$(pinned gh_version)"
+          gog_pin="$(pinned gog_version)"
+          brew_pin="$(pinned brew_version)"
+          check "GitHub CLI (gh)" cli/cli "$gh_pin"
+          check "gog" steipete/gogcli "$gog_pin"
+          check "Homebrew" Homebrew/brew "$brew_pin"
 
           title="Pinned tool releases are out of date"
           number="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
