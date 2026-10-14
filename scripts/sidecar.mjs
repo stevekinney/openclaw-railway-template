@@ -16,6 +16,8 @@
 //
 // If this process itself dies, the relay stops but nothing restarts the
 // container. Railway only probes at deploy time, so the Gateway keeps serving.
+// So no request may kill it: PORT is public when the service has a Railway
+// domain, and anything unexpected is logged and answered, never thrown.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createWebhookHandler } from "./webhook-relay.mjs";
@@ -47,11 +49,30 @@ tailscaled?.on("exit", (code, signal) => {
   }
 });
 
+for (const event of ["uncaughtException", "unhandledRejection"]) {
+  process.on(event, (error) => console.error(`openclaw-railway: sidecar ${event}:`, error));
+}
+
 createServer(async (request, response) => {
-  const path = new URL(request.url, "http://relay").pathname;
+  let path;
+  try {
+    path = new URL(request.url, "http://relay").pathname;
+  } catch {
+    response.writeHead(400).end();
+    return;
+  }
   if (!probePaths.has(path) || !["GET", "HEAD"].includes(request.method)) {
-    if (webhooks) await webhooks(request, response);
-    else response.writeHead(404).end();
+    if (!webhooks) {
+      response.writeHead(404).end();
+      return;
+    }
+    try {
+      await webhooks(request, response);
+    } catch (error) {
+      console.error("openclaw-railway: webhook relay error:", error);
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    }
     return;
   }
   try {
