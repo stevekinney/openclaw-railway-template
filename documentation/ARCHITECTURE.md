@@ -46,12 +46,15 @@ binaries, and the tools skills need:
   `tailscale/tailscale:v1.102.5` image in a multi-stage build. Dependabot tracks
   that `FROM` line along with OpenClaw's.
 - `scripts/as-node.sh`, plus `openclaw` and `brew` wrappers built on it, run
-  commands typed in a root `railway ssh` shell as `node`, so operator commands
-  cannot leave root-owned state.
+  commands as `node` with its environment (`HOME` and tools on the volume). The
+  entrypoint starts the Gateway and the sidecar with it, and in a root
+  `railway ssh` shell it keeps operator commands from leaving root-owned state.
+  Root's own `HOME` and `PATH` stay off the volume, and every program root runs
+  is named by absolute path, so nothing the agent writes there runs as root.
 - `config/openclaw.seed.json` is the baseline config (below).
 - A pinned baseline of skill tools (`gh`, `gog`, Claude Code, Codex, `jq`,
-  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with `HOME` on the
-  volume so logins and updates persist. See [TOOLS.md](TOOLS.md).
+  `tmux`), ImageMagick for HEIC photos, and a Homebrew seed, with node's `HOME`
+  on the volume so logins and updates persist. See [TOOLS.md](TOOLS.md).
 
 After the privilege drop, everything runs as `node` (uid 1000):
 

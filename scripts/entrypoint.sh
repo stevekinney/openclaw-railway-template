@@ -10,13 +10,21 @@
 # deletes or rewrites existing state.
 set -eu
 
+# Root never looks anything up on the volume: node, and so the agent, can write
+# there. This PATH and HOME hold even if a Railway variable overrides the
+# image's. node's own environment is in as-node.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOME=/root
+export PATH HOME
+node_home=/data/home
+
 fail() {
   printf 'openclaw-railway: %s\n' "$*" >&2
   exit 64
 }
 
 as_node() {
-  setpriv --reuid=node --regid=node --init-groups -- "$@"
+  /usr/local/bin/as-node "$@"
 }
 
 [ "$(id -u)" = 0 ] || fail "the entrypoint must start as root so it can prepare the volume; it drops to the node user itself. Remove any RAILWAY_RUN_UID or --user override."
@@ -56,12 +64,18 @@ if ! mountpoint -q "$OPENCLAW_HOME"; then
   printf 'openclaw-railway: warning: %s is not a mounted volume; all OpenClaw state will be lost when this container is replaced.\n' "$OPENCLAW_HOME" >&2
 fi
 
-install -d -o node -g node -m 700 "$state_directory" "$HOME" "$TS_STATE_DIR"
+# node owns /data, so it could replace one of these directories with a symbolic
+# link to, say, /usr/local/bin, which the install and chown below would then
+# hand to node. Nothing here creates links, so refuse them.
+for directory in "$state_directory" "$node_home" "$TS_STATE_DIR"; do
+  [ ! -L "$directory" ] || fail "$directory is a symbolic link, which this root entrypoint won't follow. Replace it with the directory it points to, then redeploy."
+done
+install -d -o node -g node -m 700 "$state_directory" "$node_home" "$TS_STATE_DIR"
 install -d -o node -g node -m 755 "$(dirname "$TS_SOCKET")"
 chown node:node "$OPENCLAW_HOME"
 # A root shell (for example `railway ssh` without the wrappers) can leave
 # root-owned files behind, which locks the Gateway and its tools out of them.
-find "$state_directory" "$HOME" "$TS_STATE_DIR" -xdev ! -user node -exec chown -h node:node {} +
+find "$state_directory" "$node_home" "$TS_STATE_DIR" -xdev ! -user node -exec chown -h node:node {} +
 
 if [ ! -e "$config_file" ] && [ ! -L "$config_file" ]; then
   install -o node -g node -m 600 /etc/openclaw-railway/openclaw.seed.json "$config_file"
@@ -103,10 +117,9 @@ if [ ! -e "$homebrew_directory" ] && [ ! -L "$homebrew_directory" ]; then
 fi
 
 # tailscaled and the health relay. Neither needs the auth key or the Gateway
-# token, so neither gets them.
-# (setpriv directly, not as_node: a backgrounded function leaves a root shell.)
-setpriv --reuid=node --regid=node --init-groups -- \
-  env -u TS_AUTHKEY -u OPENCLAW_GATEWAY_TOKEN node /usr/local/lib/openclaw-railway/sidecar.mjs &
+# token, so neither gets them (as-node drops the key).
+# (The script, not as_node: a backgrounded function leaves a root shell.)
+/usr/local/bin/as-node /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN /usr/local/bin/node /usr/local/lib/openclaw-railway/sidecar.mjs &
 
 if [ -z "$without_tailscale" ]; then
   backend_state() {
@@ -170,4 +183,4 @@ if [ -z "$without_tailscale" ]; then
 fi
 unset TS_AUTHKEY
 
-exec setpriv --reuid=node --regid=node --init-groups -- "$@"
+exec /usr/local/bin/as-node "$@"
