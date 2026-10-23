@@ -24,12 +24,15 @@ Mac through the paired app, not here. Skills for devices on your home network
 
 ## Logins persist
 
-`HOME` is `/data/home`, on the volume, so anything a tool stores under `~`
-(Google tokens, Claude Code and Codex sessions, tool settings) survives
-redeploys. Back it up with the rest of the volume.
+The Gateway's `HOME` is `/data/home`, on the volume, so anything a tool stores
+under `~` (Google tokens, Claude Code and Codex sessions, tool settings)
+survives redeploys. Back it up with the rest of the volume.
 
-`railway ssh` gives you a root shell. Run tool commands with `as-node` so their
-files belong to the Gateway's user; the agent can't read root-owned files. (The
+`railway ssh` gives you a root shell, whose `HOME` is `/root` and whose `PATH`
+has nothing on the volume: the agent can write to the volume, so a root shell
+that read files or ran programs from it would run the agent's code as root.
+Run tool commands with `as-node`, which runs them as the Gateway's user with
+its `HOME` and `PATH`, so their files are where the agent can read them. (The
 container hands stray root-owned files back to `node` on every start, but only
 then.)
 
@@ -48,14 +51,14 @@ as-node claude auth login
 
 `gog` needs your own Google OAuth client and a password for its token file.
 `gog-login` signs it in through your tailnet: Google redirects your browser to
-`https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, and a Tailscale Serve
+`https://<machine-name>.<tailnet>.ts.net:8443/oauth2/callback`, and a Tailscale Serve
 route that exists only while `gog-login` runs hands the callback to `gog`.
 Nothing needs a `127.0.0.1` redirect or a pasted URL.
 
 1. In Google Cloud Console, enable the APIs you want (Gmail, Calendar, Drive, …)
    and create an OAuth client of type **Web application** (a **Desktop app**
    client only allows `127.0.0.1` redirects). Under **Authorized redirect URIs**
-   add `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, using the
+   add `https://<machine-name>.<tailnet>.ts.net:8443/oauth2/callback`, using the
    machine's real name, and download the client JSON.
 2. Give the token file a password, stored as a sealed Railway variable:
 
@@ -142,7 +145,7 @@ volume.
 **What this layer gives up.** Tools on the volume aren't pinned: they change when
 you or the agent update them, not through a reviewed PR, and rolling back the
 image doesn't roll them back. To return to the baseline, remove the override:
-`as-node rm ~/.local/bin/claude`, `brew uninstall <formula>`, or
+`as-node rm /data/home/.local/bin/claude`, `brew uninstall <formula>`, or
 `as-node npm uninstall -g <package>`. The agent can use the same commands, so
 it can install software too ([SECURITY.md](SECURITY.md#tools-in-the-image)).
 

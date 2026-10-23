@@ -1,6 +1,6 @@
 # Acceptance criteria
 
-Status as of 2026-10-08. Statuses:
+Status as of 2026-10-13. Statuses:
 
 - **Verified**: checked by a repeatable test or command, cited.
 - **Verified (previous layout)**: verified live while Tailscale ran as a separate
@@ -93,9 +93,28 @@ health check through the relay, and the Mac app.
 | 18 | Docker builds are reproducible | Verified | Base images and BuildKit frontend pinned by digest; release binaries checksum-verified; npm lockfiles; GitHub Actions pinned to commit SHAs. Debian packages (`jq`, `tmux`, ImageMagick) are deliberately unpinned ([UPGRADING.md](UPGRADING.md)). |
 | 19 | Version upgrades require one authoritative version change | Verified | One `FROM` line per upstream (OpenClaw, Tailscale); tests derive the expected versions from them. Dependabot updates tag and digest together. |
 | 20 | CI validates the deployment configuration | Verified | `.github/workflows/ci.yml` (static checks and the image test) has passed on every push to `main`. The live tier runs in CI only when the `TAILSCALE_TEST_AUTHKEY` secret is set. |
-| 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` tested against a running Gateway. Railway backup restore not exercised. |
+| 21 | Backup and rollback procedures are documented | Verified (docs) / restore live pending | [UPGRADING.md](UPGRADING.md). `openclaw backup create --verify` was run by hand, not by an automated test (`tests/image.test.sh` has no backup check): locally while the Gateway was running, and on production during the 2026-10-08 migration ([UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout)). Railway backup restore not exercised: the restore flow follows Railway's backup docs. Railway volume backups were not available on the Hobby plan. |
 | 22 | The repository can be deployed from GitHub to Railway | Verified (previous layout) / live validation required | Previous layout: `railway config apply` with `.railway/railway.ts` created the services from `main`, the images built on Railway, and the Gateway answered a real agent message through Anthropic. One-service layout: deployed from the branch into a scratch Railway project with `railway config apply` (2026-10-08); built, logged in to the tailnet, and passed the health check. Production migrated on 2026-10-08 ([UPGRADING.md](UPGRADING.md#migrating-from-the-two-service-layout)); state inventory unchanged afterwards. |
 | 23 | Suitable for a reusable public Railway template | Verified (live) | MIT licensed, public repository, no secrets, generated Gateway token. The published template (one service, asking only for `TS_AUTHKEY`) was deployed into a fresh project on 2026-10-08: it built, logged in, became `openclaw-1` because `openclaw` was taken, and Serve and the QR code followed the real name. Repeated on 2026-10-08 from `main` at `48ba023` with `railway deploy -t openclaw-private-gateway`: healthy 4m24s after the command, one service and one `/data` volume, no domains, a 64-character generated token, `openclaw-1` reachable over the tailnet (`/healthz`, `/readyz`, `/startupz` 200), the dashboard signed in through tailnet identity, and a new Mac app pairing. It found the template page showing `https://openclaw..ts.net` (Railway strips `<tailnet>`; fixed and tested) and the entrypoint logging the requested name instead of `openclaw-1` (fixed). Onboarding was not re-run on this deploy (no provider key); see #22 for the earlier agent reply. |
+
+## Notes moved from the user guides
+
+The guides state behavior without qualifiers. What backs each statement:
+
+| Statement | Evidence |
+| --- | --- |
+| The deployment steps in [DEPLOYMENT.md](DEPLOYMENT.md) | Run against a live Railway project on 2026-10-08. |
+| The first HTTPS request to a new machine takes about 15 s; a taken name gets a `-1` suffix and the address follows | Timing measured locally (≈15.6 s); the suffix behavior seen on the fresh template deploys (criterion 23). |
+| Onboarding keeps `gateway.tailscale.mode: "serve"` with `--gateway-bind loopback`; `lan` makes the next start refuse the config | Verified locally. |
+| The Gateway comes back about 30 s after the onboarding restart | Observed on Railway (criterion 6). |
+| Browsers sign in with tailnet identity, with no token or device approval | Verified locally against a real tailnet, and live on the fresh template deploy (criterion 14). |
+| `TELEGRAM_BOT_TOKEN` enables Telegram and is never written to the volume | Tested locally with a dummy token; a real bot on production (criterion 15). Not tested with a real bot on a fresh template deploy. |
+| A new device pairs on the current layout | Verified live (criterion 14). |
+| The macOS app reconnects on its own after the move to Tailscale in the container | Verified live on production, 2026-10-08, with app 2026.9.8 (criteria 13, 14). |
+| The app can approve its own node capability request from its approval panel | Observed on a live deployment. |
+| Through the Railway SSH tunnel, device pairing is auto-approved because the Gateway sees a loopback client | Not verified live. |
+| Rolling back is "old image + the pre-upgrade backup", restored from **Backups** | Not verified live; follows Railway's backup docs (criterion 21). |
+| `openclaw backup create --verify` works against a running Gateway | Run by hand, locally (criterion 21). |
 
 ## Additional features verified live (2026-10-08)
 
@@ -104,7 +123,7 @@ health check through the relay, and the Mac app.
 | Opt-in webhooks ([WEBHOOKS.md](WEBHOOKS.md)) | Through a Railway domain on the production deployment: `POST /hooks/agent` with the token reached the restricted `mail_reader` agent and completed (`status: ok`); no token gave 401; targeting `main` gave 400. On a scratch deployment: path tokens worked, other paths and methods gave 404, and 20 failures locked out the caller even with rotating `X-Forwarded-For`/`X-Real-IP` headers, while a different real caller still got 401. |
 | Security audit with webhooks | 0 critical, 2 warnings after configuration (`trusted_proxies_missing`; `plugins.tools_reachable_permissive_policy`, about the user's own plugins and `main`'s full tool profile). |
 | Gmail push | Production: the existing `gog-gmail-watch-push` subscription was repointed to the Railway domain; `hooks.gmail` applied without a restart (watch registered, `gog gmail watch serve` on 127.0.0.1:8788); a real new-mail push became a `mail_reader` hook run that completed (`status=ok`, no delivery). Stale and synthetic pushes were ignored by `gog`. |
-| Portals | An agent opened a portal on its own Serve port; over the tailnet it returned the test page (200) with its ticket and 401 without. |
+| Portals | Production, 2026-10-13: the `main` agent opened a portal for a test server on port 5173 and got its own Serve HTTPS port (35079, in Railway's ephemeral range 32768–38768). Over the tailnet: 401 without the token, with a wrong one, or with only a spoofed `Tailscale-User-Login` header; 200 with the token, which became a `Secure; HttpOnly; Partitioned` cookie and was stripped before the app (no token, no cookie, no Tailscale identity header upstream; `Host` rewritten to the local target). App cookies came back namespaced (`oc_portal_<namespace>_…`). Server-sent events streamed (headers in 0.17 s, three events over 4.5 s); a WebSocket upgrade returned 101 and the server's frame, with the cookie or the token in the URL, and 401 without. The dashboard's Portals page embedded the preview. Closing the portal withdrew its port, the development server kept running, and a portal from before the last redeploy was gone. |
 | `gog-login` on production | Google redirected to `https://openclaw.<tailnet>.ts.net:8443/oauth2/callback`, `gog` received the authorization through the tailnet, exchanged the code, and stored a refresh token for the `web` client (`gog auth list --check`: valid; 2026-10-13). The temporary port 8443 route was gone afterwards. |
 | Tailscale Funnel for webhooks | Not used: built and tested, but Funnel ingress never reached a userspace-mode node from this container (the official Tailscale container failed the same way). See [WEBHOOKS.md](WEBHOOKS.md#why-not-tailscale-funnel). |
 

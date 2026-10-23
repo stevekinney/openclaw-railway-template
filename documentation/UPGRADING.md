@@ -53,7 +53,9 @@ Two complementary backups; take both before merging an upgrade.
 
 **Railway volume backup** (restorable in place, whole volume): in the dashboard,
 `openclaw` service → **Backups** → **Create backup**. Manual backups are limited
-to 50% of the volume size; grow the volume first if needed.
+to 50% of the volume size; grow the volume first if needed. This was not
+available on the Hobby plan, and Railway's backup docs don't name the plans that
+include it. Without it, the OpenClaw archive below is your backup.
 
 **OpenClaw archive** (portable, verified, off-platform):
 
@@ -65,9 +67,8 @@ scp <service-instance-id>@ssh.railway.com:/tmp/openclaw-backup/<archive>.tar.gz 
 (The service instance ID is in the dashboard: ⌘K → **Copy Service Instance
 ID**.) `/tmp` is wiped on redeploy, so copy the archive off first. Always pass
 `--output`: the default is the current directory, `/app`, which the `node` user
-can't write. Archives contain credentials; store them like secrets. Verified
-locally while the Gateway was running; SQLite files belonging to the bundled
-Codex runtime are archived as raw bytes with a warning.
+can't write. Archives contain credentials; store them like secrets. SQLite files
+belonging to the bundled Codex runtime are archived as raw bytes with a warning.
 
 ## 6. Deploy
 
@@ -113,8 +114,7 @@ therefore "old image + the backup taken before the upgrade":
 
 Anything written after the backup (conversations, pairings, config changes) is
 lost in a rollback; the unmounted volume still has it if you need to recover
-something by hand. **(live-unverified: the restore flow follows Railway's backup
-docs.)**
+something by hand.
 
 Tools you installed or updated on the volume (`~/.local`, Homebrew in
 `/data/linuxbrew`) and Tailscale's node state (`/data/tailscale`) are part of
