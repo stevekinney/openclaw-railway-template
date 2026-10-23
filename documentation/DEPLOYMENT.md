@@ -80,6 +80,7 @@ Create one service from your GitHub fork, named `openclaw`. Then:
 | Replicas | 1 |
 | Draining seconds | 330 |
 | `PORT` variable | **none** (Railway's default, 8080, is where the health relay listens) |
+| `XDG_CACHE_HOME` variable | `/tmp` (disposable SQLite inspection snapshots use container storage) |
 | Public networking | none |
 
 </details>
@@ -186,7 +187,7 @@ and [OpenClaw's automation guide](https://docs.openclaw.ai/start/wizard-cli-auto
 
 Onboarding rewrites the Gateway settings, which needs a restart. Because Railway is the
 supervisor (`OPENCLAW_SUPERVISOR_MODE=external`), the Gateway exits cleanly and
-Railway's `ALWAYS` restart policy starts it again (observed: back in ≈30 s).
+Railway's `ALWAYS` restart policy starts it again. Routine boots of an activated image use Gateway state admission; a new image first runs full Doctor repair. Measure the current deployment's `/startupz` timing rather than relying on an older release's restart time.
 Then check that the agent answers:
 
 ```bash

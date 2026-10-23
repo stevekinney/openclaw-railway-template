@@ -32,14 +32,12 @@ way in is Tailscale Serve, which OpenClaw configures and owns.
 
 ## The OpenClaw service
 
-The image is the official OpenClaw image plus a few small files, Tailscale's two
-binaries, and the tools skills need:
+The image extends the pinned OpenClaw release with the reviewed capture and activation patch, Tailscale's two binaries, and the tools skills need. Runtime bundles are rebuilt from the pinned upstream source; production dependencies and plugin selection come from the release image:
 
 - `scripts/entrypoint.sh` (mostly comments and error messages) runs as root,
   validates the environment, prepares the volume, writes
   `config/openclaw.seed.json` and seeds Homebrew on first boot only, starts the
-  sidecar, logs Tailscale in on first boot, and `exec`s into the stock startup
-  as the unprivileged `node` user.
+  sidecar, logs Tailscale in on first boot, and `exec`s into the patched image activation entrypoint as the unprivileged `node` user.
 - `scripts/sidecar.mjs` runs `tailscaled` and relays Railway's health check
   (below).
 - `tailscale` and `tailscaled`, copied from the pinned
@@ -55,9 +53,11 @@ binaries, and the tools skills need:
 
 After the privilege drop, everything runs as `node` (uid 1000):
 
+Railway sets `XDG_CACHE_HOME=/tmp` so disposable SQLite inspection snapshots use container storage. `HOME=/data/home` still keeps tool credentials and settings on the volume. Durable Doctor recovery captures and migration backups remain on `/data`.
+
 ```text
 PID 1  tini -s --                      signal forwarding, zombie reaping
-       └─ node docker-entrypoint.mjs    runs `openclaw doctor --fix` (state migrations)
+       └─ node docker-entrypoint.mjs    runs full Doctor on image changes; Gateway admission on routine boots
           └─ execve → openclaw-gateway   the Gateway
        node sidecar.mjs                  started by the entrypoint before the exec
        └─ tailscaled                     userspace networking, state on /data
@@ -88,8 +88,7 @@ stops the container so that happens.
    would show it), then delete the file. If it is already logged in, the key is
    not used. Then unset `TS_AUTHKEY`.
 6. `exec setpriv` → `node` user → `tini` → OpenClaw's `docker-entrypoint.mjs`,
-   which runs Doctor migrations under exclusive state ownership, then `execve`s
-   the Gateway with `--bind loopback --tailscale serve --auth token`.
+   which runs full Doctor repair under exclusive state ownership when the image activation receipt is absent or mismatched, then `execve`s the Gateway with `--bind loopback --tailscale serve --auth token`. A matching private receipt takes the original Gateway command directly through its normal state admission checks.
 7. The Gateway claims Tailscale Serve (HTTPS on 443 of the node's MagicDNS name,
    proxied to a dedicated ephemeral loopback listener). Startup succeeds only
    once the claim is active, and the claim is released when the Gateway stops.
@@ -230,12 +229,12 @@ policy is also who can open the dashboard. See
 
 | Concern | Owner | Mechanism |
 | --- | --- | --- |
-| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s (300 s from the template). 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. *(Through the relay on Railway: not yet verified live.)* |
+| Deploy health gate | Railway | `GET /startupz` on `$PORT` = 8080 (Host `healthcheck.railway.app`), relayed by the sidecar to the loopback Gateway; timeout 600 s. 200 once the Gateway admits traffic, which includes Serve being up; ignores channel health. |
 | Restart on exit | Railway | `restartPolicyType: ALWAYS`. Required: in external-supervisor mode a config change that needs a restart makes the Gateway exit 0 ("full process restart (supervisor restart)"), and a dead `tailscaled` also stops the container with exit 0. |
 | Graceful stop | Railway + container | Railway sends SIGTERM, then SIGKILL after `drainingSeconds: 330` (OpenClaw's own stop budget). `tini` forwards the signal; the Gateway drains, releases its Serve claim, and exits 0 (≈60 ms when idle). |
 | Crash recovery | Railway | A killed Gateway ends `tini`, the container exits non-zero, Railway restarts it. A killed `tailscaled` makes the sidecar stop the container. |
 | Tailscale login | Container | Node key and certificates on `/data/tailscale`; `TS_AUTHKEY` is used only when the node is logged out. Restarts reuse the saved login (verified). |
-| State migrations | Container | OpenClaw's entrypoint runs `doctor --fix` before every Gateway start. |
+| State migrations | Container | The patched entrypoint runs full `doctor --fix` on image changes and records success atomically. Routine boots use Gateway state admission. See [upgrade and restore policy](UPGRADING.md). |
 | Single writer | Railway + OpenClaw | One replica. Railway never runs two deployments with the same volume; OpenClaw 2026.9.8 also enforces single-owner Gateway startup. |
 | Post-deploy liveness | **Nobody, by default** | Railway checks health only during a deploy. A Gateway that is running but wedged is not restarted automatically. Monitor `https://openclaw.<tailnet>.ts.net/readyz` from a tailnet device if you need this. |
 

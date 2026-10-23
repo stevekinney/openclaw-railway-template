@@ -62,8 +62,7 @@ Railway calls `GET /startupz` on port 8080 with Host `healthcheck.railway.app`
 for up to 600 seconds. The sidecar relays it to the loopback Gateway, which
 answers 200 only after Tailscale Serve is up.
 
-- The logs end in Doctor output: migrations are slow or blocked. Wait, or see
-  exit 78 above.
+- The logs end in Doctor output on image activation: compare log timestamps with the deployment's health-check window. Keep `XDG_CACHE_HOME=/tmp` so disposable SQLite inspection snapshots do not repeatedly copy and sync databases on the persistent volume. Recovery captures remain on the volume. Check resource metrics and storage latency before retrying; see exit 78 above if Doctor reports a migration failure.
 - The entrypoint stopped at a Tailscale error: see the table above.
 - `/startupz` doesn't depend on channels, so a broken Telegram token does not
   fail deploys. `/readyz` does (it returns 503 with an invalid token; observed).

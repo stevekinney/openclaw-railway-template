@@ -1,9 +1,10 @@
 # Upgrading and rolling back
 
-An OpenClaw upgrade is one change: the `FROM` line in `Dockerfile` (tag and
-digest). The Gateway never updates itself in place: `OPENCLAW_SUPERVISOR_MODE=external`
-makes OpenClaw refuse self-update, and `OPENCLAW_NO_AUTO_UPDATE=1` disables
-automatic update checks and applies.
+The runtime extends the pinned OpenClaw image with a source-built capture engine patch in `scripts/openclaw-plugin-capture.patch`. `Dockerfile` pins the upstream source commit, archive checksum, Node image, Bun image, and released runtime image. The build runs the capture regression tests, regenerates runtime bundles, and retains the release's plugin selection and production dependencies. The patch removes a duplicate copied-file hashing pass while preserving receipt framing, original-source verification, and native admission. The template also enables image activation receipts: a new OpenClaw build runs full Doctor repair before Gateway, while routine boots of that build use Gateway state admission. Failed or interrupted Doctor runs never record activation. The receipt is private, atomically replaced, and bound to the build, entrypoint, profile, and state selection.
+
+A consistent backup restored with a matching activation receipt follows the same-image Gateway admission policy. Restoring state does not trigger a fresh Doctor recovery capture by itself. To require full Doctor repair and a new recovery capture after a restore, remove `/data/.openclaw/railway-image-activation.json` before starting the container.
+
+An upgrade must update the runtime image and source revision together, revalidate or remove the patch against that release, and run the image tests. The build fails if the patch no longer applies or the rebuilt version differs from the runtime image. The Gateway never updates itself in place: `OPENCLAW_SUPERVISOR_MODE=external` refuses self-update, and `OPENCLAW_NO_AUTO_UPDATE=1` disables automatic update checks and applies.
 
 **Merging to `main` deploys.** Railway builds and deploys every push to the
 branch it watches. Treat the merge of an upgrade PR as the deploy step below.
@@ -29,8 +30,7 @@ docker buildx imagetools inspect "ghcr.io/openclaw/openclaw:$version" --format '
 # edit Dockerfile: FROM ghcr.io/openclaw/openclaw:<version>@sha256:<digest>
 ```
 
-Nothing else references the OpenClaw version. (The Tailscale binaries have
-their own `FROM … AS tailscale` line; see [Tailscale upgrades](#tailscale-upgrades).)
+Update the source revision and archive checksum in the build stage at the same time, then verify the capture patch against the new source. The Tailscale binaries have their own `FROM … AS tailscale` line; see [Tailscale upgrades](#tailscale-upgrades).
 
 ## 3–4. Build and validate
 
@@ -75,7 +75,15 @@ Merge the PR. On start, OpenClaw's entrypoint runs `openclaw doctor --fix`
 under exclusive state ownership before the Gateway starts, which applies config
 and database migrations. Before changing a database schema, Doctor saves
 `<database>.pre-startup-migration-<id>.bak` copies beside the originals. The
-health check allows 600 seconds for this.
+health check allows 600 seconds for Doctor and Gateway startup together.
+
+Test upgrades against retained state before merging. On Railway, the 2026.10.5 upgrade spent over eight minutes in Doctor inspecting plugins and databases, then exceeded the previous 600-second health-check window during Gateway startup. A successful fresh-volume test does not verify this path. Check the full deployment's startup duration and require `/startupz` to return 200 within the configured window.
+
+The initial recovery deployment took 10 minutes 9 seconds from container start to Gateway readiness: Doctor used 7 minutes 48 seconds and Gateway startup used about 99 seconds. `HOME=/data/home` put disposable SQLite inspection snapshots on the slow persistent volume. Setting `XDG_CACHE_HOME=/tmp` reduced the next full boot to 6 minutes 21 seconds; a diagnostic repeat took 7 minutes 34 seconds. Both passed `/startupz`, and the timeout returned to 600 seconds. A controlled five-snapshot test took 32.7 seconds on the persistent volume and 3.1 seconds in `/tmp`, with matching row counts and successful integrity checks.
+
+Startup remains slow after this change. Phase tracing measured 133 seconds preserving recovery state, 86 seconds in Doctor's configuration flow, and 72 seconds in Doctor contributions. Profiling the configuration preflight identified repeated plugin dependency capture and hashing. These are separate from schema migrations; do not describe the entire Doctor duration as migration work or treat a longer timeout as a performance fix.
+
+[OpenClaw issue #166526](https://github.com/openclaw/openclaw/issues/166526) tracks the same repeated plugin capture work. The pinned image already includes guarded copy batching and source custody reuse. Further optimization must retain source verification, independent plugin instance ownership, and recovery capture before mutation.
 
 If Doctor can't migrate safely, the container exits with code **78** and Railway
 keeps restarting it. Don't delete state or lock files; see

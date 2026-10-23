@@ -48,6 +48,7 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
   assert.equal(instanceCount(openclaw), 1);
   assert.equal(openclaw.deploy?.requiredMountPath, "/data");
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
+  assert.equal(openclaw.deploy?.healthcheckTimeout, 600, "startup performance must fit the existing window");
   assert.equal(openclaw.deploy?.restartPolicyType, "ALWAYS");
   assert.equal(openclaw.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the health relay");
   assert.deepEqual(mountPaths(openclaw), ["/data"]);
@@ -64,6 +65,10 @@ test("volumes declare region and size, and services run in the same region", () 
       assert.deepEqual(regions, [config.region], `${serviceName} runs in the volume region`);
     }
   }
+});
+
+test("disposable SQLite inspection snapshots use container storage", () => {
+  assert.equal(findService("openclaw").variables?.XDG_CACHE_HOME?.value, "/tmp");
 });
 
 test("no service is exposed publicly", () => {

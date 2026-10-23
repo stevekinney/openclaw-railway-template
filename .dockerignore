@@ -12,3 +12,4 @@
 !scripts/gog-login.sh
 !tools/package.json
 !tools/package-lock.json
+!scripts/openclaw-plugin-capture.patch
