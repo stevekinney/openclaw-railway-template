@@ -66,6 +66,9 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   assert.match(dockerfile, /check-slack-routing\.ts identity \/app \/tmp\/release-build-info\.json/);
   assert.match(dockerfile, /hooks\.resolve-inbound-route\.test\.ts/);
   assert.match(dockerfile, /vitest\.extension-slack\.config\.ts/);
+  assert.match(dockerfile, /new Set\(\[\.\.\.require\("node:fs"\)\.readdirSync\("\/tmp\/release-extensions"\), "slack"\]\)/);
+  assert.match(dockerfile, /generateNpmPackageLock\(directory, \{ installStrategy: "shallow" \}\)/);
+  assert.match(dockerfile, /cp -a \/tmp\/slack-production-dependencies\/node_modules dist\/extensions\/slack\/node_modules/);
   assert.match(dockerfile, /check-slack-routing\.ts runtime \/app \/etc\/openclaw-railway\/openclaw-slack-routing\.patch/);
 });
 

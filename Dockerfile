@@ -39,14 +39,17 @@ RUN pnpm test src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins
  && node scripts/run-vitest.mjs --config test/vitest/vitest.extension-slack.config.ts --maxWorkers=1
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
 RUN set -eu; \
-    selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack"])].join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
+    node --import ./scripts/tsx.mjs --input-type=module -e 'import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { generateNpmPackageLock, packageJsonForNpmLock, readNpmLockOverrides } from "./scripts/generate-npm-package-lock.mts"; import { resolveNpmRunner } from "./scripts/npm-runner.mts"; const directory = "/tmp/slack-production-dependencies"; fs.mkdirSync(directory); const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync("extensions/slack/package.json", "utf8")); const manifest = { name, version, dependencies, optionalDependencies }; fs.writeFileSync(directory + "/package.json", JSON.stringify(packageJsonForNpmLock(manifest, readNpmLockOverrides(manifest, directory)))); fs.writeFileSync(directory + "/package-lock.json", generateNpmPackageLock(directory, { installStrategy: "shallow" })); const runner = resolveNpmRunner({ npmArgs: ["ci", "--install-strategy=shallow", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-fund", "--workspaces=false"] }); execFileSync(runner.command, runner.args, { cwd: directory, stdio: "inherit" });'; \
     pnpm ui:build; \
     node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); information.slackRoutingPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-slack-routing.patch")); information.slackRoutingContractVersion = 1; fs.writeFileSync(file, JSON.stringify(information));'; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
     node -e 'const fs = require("node:fs"); for (const plugin of fs.readdirSync("/tmp/release-extensions")) { const source = "/tmp/release-extensions/" + plugin + "/node_modules"; if (fs.existsSync(source)) fs.cpSync(source, "dist/extensions/" + plugin + "/node_modules", { recursive: true, verbatimSymlinks: true }); }'; \
+    cp -a /tmp/slack-production-dependencies/node_modules dist/extensions/slack/node_modules; \
+    cp /tmp/slack-production-dependencies/package-lock.json dist/extensions/slack/package-lock.json; \
     node -e 'process.stdout.write(JSON.stringify(require("node:fs").readdirSync("dist", { recursive: true }).toSorted()))' > /tmp/openclaw-build-files.json
 
 # Extend the release with regenerated runtime bundles from the reviewed patch.
