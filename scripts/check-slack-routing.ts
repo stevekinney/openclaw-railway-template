@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 function readObject(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -46,8 +46,10 @@ export function verifyRuntimeRegistration(root: string): void {
         writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ contractVersion: 1 }));
       } };
     `);
+    const bundledSlack = join(root, "dist/extensions/slack");
+    assert.equal(readObject(join(bundledSlack, "package.json")).version, readObject(join(root, "package.json")).version, "The image must contain its matched Slack channel.");
     const configuration = join(directory, "configuration.json");
-    writeFileSync(configuration, JSON.stringify({ plugins: { allow: ["routing-contract-check"], load: { paths: [directory] }, entries: { "routing-contract-check": { enabled: true } } } }));
+    writeFileSync(configuration, JSON.stringify({ channels: { slack: { enabled: true, botToken: "xoxb-test", appToken: "xapp-test" } }, plugins: { allow: ["routing-contract-check", "slack"], load: { paths: [directory, bundledSlack] }, entries: { "routing-contract-check": { enabled: true }, slack: { enabled: true } } } }));
     // Registration must not contact Slack or any other provider during an image build.
     const guard = join(directory, "no-network.mjs");
     writeFileSync(guard, `
@@ -79,18 +81,26 @@ export function verifyRuntimeRegistration(root: string): void {
       assert.throws(() => net.connect({host: 'example.invalid', port: 443}), /Network access/);
       assert.throws(() => dns.lookup('example.invalid', () => {}), /Network access/);
     `], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
-    const output = execFileSync(process.execPath, [join(root, "openclaw.mjs"), "plugins", "info", "routing-contract-check", "--runtime", "--json"], {
-      cwd: root,
-      encoding: "utf8",
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const report: unknown = JSON.parse(output.slice(output.indexOf("{")));
-    assert(report && typeof report === "object" && "plugin" in report);
-    const plugin = report.plugin;
-    assert(plugin && typeof plugin === "object" && "status" in plugin);
-    assert.equal(plugin.status, "loaded", "Routing probe did not load in the real host.");
-    assert.equal(readObject(receipt).contractVersion, 1, "Runtime registration was not executed.");
+    for (const pluginId of ["routing-contract-check", "slack"]) {
+      const output = execFileSync(process.execPath, [join(root, "openclaw.mjs"), "plugins", "info", pluginId, "--runtime", "--json"], {
+        cwd: root,
+        encoding: "utf8",
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const report: unknown = JSON.parse(output.slice(output.indexOf("{")));
+      assert(report && typeof report === "object" && "plugin" in report);
+      const plugin = report.plugin;
+      assert(plugin && typeof plugin === "object" && "status" in plugin);
+      assert.equal(plugin.status, "loaded", "Routing probe did not load in the real host.");
+      assert.equal(readObject(receipt).contractVersion, 1, "Runtime registration was not executed.");
+      if (pluginId === "slack") {
+        assert("source" in plugin && typeof plugin.source === "string");
+        assert(realpathSync(plugin.source).startsWith(realpathSync(bundledSlack) + sep), "Slack must load from the rebuilt image, not a retained archive.");
+        assert("version" in plugin);
+        assert.equal(plugin.version, readObject(join(root, "package.json")).version);
+      }
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

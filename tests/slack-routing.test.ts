@@ -9,7 +9,8 @@ import { verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity 
 function fixture(run: (root: string, patch: string, release: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "routing-upgrade-test-"));
   try {
-    mkdirSync(join(root, "dist"));
+    mkdirSync(join(root, "dist/extensions/slack"), { recursive: true });
+    writeFileSync(join(root, "dist/extensions/slack/package.json"), JSON.stringify({ version: "1.0.0" }));
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0" }));
     const patch = join(root, "routing.patch");
     writeFileSync(patch, "complete routing patch");
@@ -72,5 +73,13 @@ test("does not accept a CLI success without executing runtime registration", () 
   fixture((root) => {
     writeFileSync(join(root, "openclaw.mjs"), 'console.log(JSON.stringify({plugin: {status: "loaded"}}));');
     assert.throws(() => verifyRuntimeRegistration(root), /registration.json/);
+  });
+});
+
+
+test("rejects an upgrade that stops shipping the matched Slack channel", () => {
+  fixture((root) => {
+    rmSync(join(root, "dist/extensions/slack"), { recursive: true });
+    assert.throws(() => verifyRuntimeRegistration(root), /slack.*package.json/);
   });
 });
