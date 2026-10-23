@@ -51,6 +51,7 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
   assert.equal(openclaw.deploy?.healthcheckTimeout, 600, "startup performance must fit the existing window");
   assert.equal(openclaw.deploy?.restartPolicyType, "ALWAYS");
+  assert.equal(openclaw.variables?.RAILWAY_HEALTHCHECK_TIMEOUT_SEC?.value, String(openclaw.deploy?.healthcheckTimeout));
   assert.equal(openclaw.variables?.PORT, undefined, "no PORT: Railway's default 8080 is the health relay");
   assert.deepEqual(mountPaths(openclaw), ["/data"]);
 });

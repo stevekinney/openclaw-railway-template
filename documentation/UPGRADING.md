@@ -71,7 +71,7 @@ Codex runtime are archived as raw bytes with a warning.
 
 ## 6. Deploy
 
-Merge the PR. On start, OpenClaw's entrypoint runs `openclaw doctor --fix`
+Merge the PR. On first activation of the new build, OpenClaw's entrypoint runs `openclaw doctor --fix`
 under exclusive state ownership before the Gateway starts, which applies config
 and database migrations. Before changing a database schema, Doctor saves
 `<database>.pre-startup-migration-<id>.bak` copies beside the originals. The
@@ -81,9 +81,9 @@ Test upgrades against retained state before merging. On Railway, the 2026.10.5 u
 
 The initial recovery deployment took 10 minutes 9 seconds from container start to Gateway readiness: Doctor used 7 minutes 48 seconds and Gateway startup used about 99 seconds. `HOME=/data/home` put disposable SQLite inspection snapshots on the slow persistent volume. Setting `XDG_CACHE_HOME=/tmp` reduced the next full boot to 6 minutes 21 seconds; a diagnostic repeat took 7 minutes 34 seconds. Both passed `/startupz`, and the timeout returned to 600 seconds. A controlled five-snapshot test took 32.7 seconds on the persistent volume and 3.1 seconds in `/tmp`, with matching row counts and successful integrity checks.
 
-Startup remains slow after this change. Phase tracing measured 133 seconds preserving recovery state, 86 seconds in Doctor's configuration flow, and 72 seconds in Doctor contributions. Profiling the configuration preflight identified repeated plugin dependency capture and hashing. These are separate from schema migrations; do not describe the entire Doctor duration as migration work or treat a longer timeout as a performance fix.
+The completed template also removes duplicate copied-file hashing and records successful image activation, so routine boots do not repeat Doctor repair and recovery capture. With the patched image on the same retained production state, first activation took 6 minutes 37 seconds (including 4 minutes 7 seconds in Doctor); a same-image restart took approximately 3 minutes 23 seconds, with no second Doctor run. All three health endpoints returned 200 after both boots. These are measured examples, not guarantees for other volumes or plugin sets.
 
-[OpenClaw issue #166526](https://github.com/openclaw/openclaw/issues/166526) tracks the same repeated plugin capture work. The pinned image already includes guarded copy batching and source custody reuse. Further optimization must retain source verification, independent plugin instance ownership, and recovery capture before mutation.
+Earlier phase tracing identified repeated plugin dependency capture and hashing, tracked by [OpenClaw issue #166526](https://github.com/openclaw/openclaw/issues/166526). This work is separate from schema migrations. The template patch retains source verification, independent plugin instance ownership, and recovery capture before mutation. Do not describe the entire Doctor duration as migration work or treat a longer timeout as a performance fix.
 
 If Doctor can't migrate safely, the container exits with code **78** and Railway
 keeps restarting it. Don't delete state or lock files; see

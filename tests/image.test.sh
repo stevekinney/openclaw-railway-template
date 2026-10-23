@@ -277,6 +277,11 @@ check "webhook routes are off (404) unless OPENCLAW_RAILWAY_WEBHOOKS is set" '[ 
 log "first boot on an empty volume"
 start_gateway
 check "/startupz returns 200 through the health relay" 'wait_for_startup'
+check "first boot completes full Doctor activation exactly once" \
+  '[ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation: Doctor completed successfully")" = 1 ]'
+activation_receipt="$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)"
+check "activation is recorded in a private node-owned receipt" \
+  '[ "$(docker exec "$gateway" stat -c "%U %a" /data/.openclaw/railway-image-activation.json)" = "node 600" ]'
 check "the baseline config is written on first boot" \
   'docker logs "$gateway" 2>&1 | grep -F "created /data/.openclaw/openclaw.json from the baseline config"'
 check "the config is in local mode with an env-referenced token" \
@@ -406,6 +411,10 @@ check "SIGTERM stops the Gateway cleanly (exit 0)" '[ "$(docker inspect -f "{{.S
 check "graceful stop finished in ${stop_seconds}s" '[ "$stop_seconds" -lt 30 ]'
 docker start "$gateway" >/dev/null
 check "the Gateway starts again on the same volume" 'wait_for_startup'
+check "a routine restart admits state without repeating Doctor" \
+  '[ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation: Doctor completed successfully")" = 1 ] && [ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation unchanged: continuing to Gateway state admission")" = 1 ]'
+check "a routine restart preserves the activation receipt" \
+  '[ "$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)" = "$activation_receipt" ]'
 check "the config change persisted" '[ "$(gateway_cli config get gateway.controlUi.communityInvite)" = false ]'
 check "the baseline config was not reapplied" \
   '[ "$(docker logs "$gateway" 2>&1 | grep -c "from the baseline config")" = 1 ]'
@@ -430,6 +439,21 @@ check "the container exits when the Gateway dies, so Railway's restart policy ap
 check "the crash exit code is non-zero" '[ "$(docker inspect -f "{{.State.ExitCode}}" "$gateway")" != 0 ]'
 docker start "$gateway" >/dev/null
 check "the Gateway recovers after a crash" 'wait_for_startup'
+check "crash recovery admits state without repeating Doctor" \
+  '[ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation: Doctor completed successfully")" = 1 ] && [ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation unchanged: continuing to Gateway state admission")" = 2 ]'
+check "crash recovery preserves the activation receipt" \
+  '[ "$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)" = "$activation_receipt" ]'
+
+log "state survives container replacement"
+docker rm -f "$gateway" >/dev/null
+start_gateway
+check "a replacement container admits the existing volume" 'wait_for_startup'
+check "container replacement reuses activation without repeating Doctor" \
+  '! docker logs "$gateway" 2>&1 | grep -q "OpenClaw image activation: Doctor completed successfully" && [ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation unchanged: continuing to Gateway state admission")" = 1 ]'
+check "container replacement preserves the activation receipt" \
+  '[ "$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)" = "$activation_receipt" ]'
+check "container replacement preserves configuration and HOME files" \
+  '[ "$(gateway_cli config get gateway.controlUi.communityInvite)" = false ] && [ "$(docker exec "$gateway" cat /data/home/persist-check)" = kept ]'
 
 # The sidecar under tini, as in the real container, with tailscaled logged out.
 docker run -d --name "$watchdog" --user node -e TS_STATE_DIR=/tmp/tailscale -e TS_SOCKET=/tmp/tailscaled.sock \

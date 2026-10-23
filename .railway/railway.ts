@@ -48,7 +48,7 @@ export default defineRailway(() => {
       // Telegram token cannot fail every deploy. The sidecar relays it from
       // PORT to the loopback-only Gateway.
       healthcheckPath: "/startupz",
-      // Doctor runs migrations before the Gateway starts; upgrades can be slow.
+      // Full Doctor repair runs on image activation; routine boots admit state.
       healthcheckTimeout: 600,
       // External supervisor mode restarts by exiting cleanly, so Railway must
       // restart on every exit, not only on failures.
@@ -63,6 +63,9 @@ export default defineRailway(() => {
       // Doctor's disposable SQLite read snapshots belong on fast container
       // storage; HOME is on the slower persistent volume for credentials.
       XDG_CACHE_HOME: "/tmp",
+      // The marketplace template uses this supported variable because its
+      // editor exposes the health path without a timeout field.
+      RAILWAY_HEALTHCHECK_TIMEOUT_SEC: "600",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
       // Used once, to log the container in to your tailnet on first boot.
       TS_AUTHKEY: preserve(),

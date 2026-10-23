@@ -297,7 +297,8 @@ reported `gateway.probe_failed` on every 2026.9.8 install
 | Loopback-only Gateway | `railway ssh --service openclaw -- openclaw config get gateway.bind` | `loopback` |
 | Desktop | `openclaw-mac status --json` | primary `connected` |
 | Telegram | DM the bot | agent reply |
-| Persistence | `railway redeploy --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval |
+| Same-image activation | `railway restart --service openclaw --yes`, then inspect the startup logs | unchanged activation, Gateway state admission, no second Doctor |
+| Persistence across container replacement | `railway redeploy --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval; a rebuilt image may require Doctor activation |
 | Tailscale persistence | After the redeploy, `railway logs --service openclaw` | `serve enabled` again, no new `logged in to Tailscale`; same machine and IP |
 
 ## Keeping variables in sync
@@ -327,6 +328,8 @@ The published template is generated from a separate source project, not from a
 live deployment, so no real secret can reach it. Railway's `templateGenerate`
 keeps service names, sources, health-check paths, restart policy, volume mount
 paths, and template *functions* such as `${{secret(64, "abcdef0123456789")}}`.
+The published template sets the supported `RAILWAY_HEALTHCHECK_TIMEOUT_SEC` variable to `600`, matching `.railway/railway.ts`; its editor exposes the health-check path without a timeout field. Confirm this default after every template update, since repository pushes do not update marketplace settings. [Railway documents the timeout variable](https://docs.railway.com/deployments/healthchecks#healthcheck-timeout).
+
 It **drops literal variable values**, marks every variable required, and drops
 variable descriptions. That is why the service takes no `PORT` variable and
 relies on Railway's default. The template asks for
@@ -358,7 +361,7 @@ original source project no longer exists. So:
    `OPENCLAW_GATEWAY_TOKEN` to `${{ secret(64, "abcdef0123456789") }}` and
    placeholder values for `OPENCLAW_MACHINE_DISPLAY_NAME` and `TS_AUTHKEY`.
 2. `railway api 'mutation($p: String!) { templateGenerate(input: { projectId: $p }) { id code serializedConfig } }' --variables '{"p":"<project-id>"}'`
-3. Inspect `serializedConfig`: no secret values, one service, one volume at `/data`.
+3. Inspect `serializedConfig`: no secret values, one service, one volume at `/data`. Restore the optional `RAILWAY_HEALTHCHECK_TIMEOUT_SEC` default to `600` and confirm the health-check path is `/startupz`.
 4. Deploy it into another scratch project
    (`railway deploy -t <code> -v openclaw.TS_AUTHKEY=…`, with a reusable,
    ephemeral key) and wait for `openclaw` to turn healthy.
