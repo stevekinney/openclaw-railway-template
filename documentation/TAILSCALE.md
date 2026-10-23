@@ -49,8 +49,9 @@ In the [admin console](https://login.tailscale.com/admin):
      "grants": [
        // Only the operator's devices may reach the Gateway, and only HTTPS.
        // 8443 is gog-login's temporary Google sign-in callback (TOOLS.md);
-       // drop it if you don't use gog.
-       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:8443"] },
+       // drop it if you don't use gog. 32768-38768 is where OpenClaw portals
+       // get their HTTPS ports (see Portals below); drop it if you don't use them.
+       { "src": ["you@example.com"], "dst": ["tag:openclaw"], "ip": ["tcp:443", "tcp:8443", "tcp:32768-38768"] },
      ],
      "tests": [
        { "src": "you@example.com", "accept": ["tag:openclaw:443"] },
@@ -63,8 +64,23 @@ In the [admin console](https://login.tailscale.com/admin):
    equivalent), every tailnet member can reach and sign in to the Gateway;
    narrow it. The `openclaw` node gets no grants of its own, so it cannot open
    connections to anything else on your tailnet even if the Gateway is
-   compromised. If you use OpenClaw portals, they allocate further Serve HTTPS
-   ports that the grant must also allow.
+   compromised. Only ports with a Serve route answer: the Gateway listens on
+   loopback, so allowing the portal range exposes nothing until a portal opens.
+
+   Also check who your policy lets use **Funnel**, which publishes a port on the
+   public internet. A machine can use it only if the policy grants it the
+   `funnel` node attribute, and new tailnets grant it to every member's
+   machines:
+
+   ```jsonc
+   "nodeAttrs": [{ "target": ["autogroup:member"], "attr": ["funnel"] }]
+   ```
+
+   A tagged node isn't a member's machine, so this doesn't reach
+   `tag:openclaw`; never add `tag:openclaw` to a `funnel` target. An untagged
+   node is yours, so the default grant covers it: tag it, or narrow that target
+   to the people who need Funnel. This is the only thing that keeps Funnel off
+   (see [Operations](#operations)).
 
 ## 2. Authenticate the node
 
@@ -106,6 +122,35 @@ the policy does not allow, the same `curl` should time out. In the container,
 the Gateway logs `[tailscale] serve enabled: https://openclaw.<tailnet>.ts.net/`
 when Serve is up.
 
+## Portals
+
+[Portals](https://docs.openclaw.ai/gateway/portals) let an agent show you a
+development server it runs on the Gateway (live reload included) in the
+dashboard's **Portals** page (`https://openclaw.<tailnet>.ts.net/portals`).
+They work with no extra setup, through OpenClaw-managed Serve:
+
+- **Each portal gets its own HTTPS port** on the machine's tailnet address, for
+  example `https://openclaw.<tailnet>.ts.net:35079/`. The port is an ephemeral
+  port of the container, which on Railway is in **32768–38768** (checked
+  2026-10-13 with `cat /proc/sys/net/ipv4/ip_local_port_range`; Docker's default
+  elsewhere is 32768–60999). A restrictive access policy must allow that range,
+  as in the grant above; otherwise portal URLs time out.
+- **Access needs the portal's token**, which is in the link the agent and the
+  dashboard give you. Tailnet identity doesn't grant access, and the token works
+  for anyone who can reach the port, so treat portal links like passwords. The
+  first request stores it in a cookie and strips it before the app sees it.
+- **Portals end** when the agent closes them or the Gateway restarts (every
+  redeploy). Closing a portal doesn't stop the development server; ask the agent
+  to stop it.
+- **Tool policy**: the `portal` tool comes with the `coding` and `full` tool
+  profiles and is owner-only. A restricted agent such as the webhook reader
+  (`minimal` profile) can't open portals. `tools.deny: ["portal"]` turns them off.
+- **Not set up by the template**: OpenClaw's wildcard reverse-proxy ingress
+  (`gateway.portals.ingress`) needs your own wildcard DNS, certificate, and a
+  private edge; a Railway domain would make previews public. Managed Serve makes
+  it unnecessary. Portals on node-backed cloud workers depend on the node, not
+  on this deployment.
+
 ## Operations
 
 - **Redeploys and restarts** keep the same node, address, and certificate: state
@@ -122,8 +167,12 @@ when Serve is up.
   the node, disable key expiry in the admin console or it will drop off the
   tailnet after the tailnet's expiry period (180 days by default); the container
   then refuses to start until it gets a new `TS_AUTHKEY`.
-- **Never enable Funnel** for this node. OpenClaw's Funnel mode would make the
-  Gateway public; the `CMD` pins `--tailscale serve`.
+- **Never enable Funnel** for this node. The `CMD` pins `--tailscale serve`, so
+  OpenClaw itself never uses Funnel, but `tailscaled` runs as `node`, and so does
+  anything the agent runs: `tailscale funnel` from the agent's shell would work
+  if the tailnet allowed it. Nothing inside the container can prevent that, so
+  the control is the `funnel` node attribute in your tailnet policy
+  ([above](#1-prepare-the-tailnet)): keep it away from this node.
 - **Upgrading Tailscale.** Dependabot proposes new `tailscale/tailscale` tags for
   the `FROM … AS tailscale` line in the `Dockerfile`; the image test checks the
   installed version matches the pin.
