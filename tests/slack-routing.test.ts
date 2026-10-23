@@ -62,6 +62,7 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
   assert.match(dockerfile, /ADD --checksum=sha256:[a-f0-9]{64} https:\/\/raw\.githubusercontent\.com\/stevekinney\/openclaw-plugin-slack-workspace\/[a-f0-9]{40}\/docs\/openclaw-routing\.patch/);
   assert.match(dockerfile, /git apply --check \/tmp\/openclaw-slack-routing\.patch/);
+  assert.match(dockerfile, /COPY --from=openclaw-build --chmod=0644 \/tmp\/openclaw-slack-routing\.patch/);
   assert.match(dockerfile, /check-slack-routing\.ts identity \/app \/tmp\/release-build-info\.json/);
   assert.match(dockerfile, /hooks\.resolve-inbound-route\.test\.ts/);
   assert.match(dockerfile, /vitest\.extension-slack\.config\.ts/);
