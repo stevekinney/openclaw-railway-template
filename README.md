@@ -20,10 +20,7 @@ reachable only through Tailscale.
   and a Tailscale auth key; the Gateway token is generated. The name becomes
   the tailnet address (`My Gateway` → `https://my-gateway.<tailnet>.ts.net`),
   so a second deployment gets its own name instead of `openclaw-1`.
-- **All state on one volume** at `/data`: OpenClaw's state in `/data/.openclaw`
-  (migrated by OpenClaw's own Doctor on every start), Tailscale's node state,
-  the home directory, and Homebrew, so the machine identity, tool logins, and
-  updates survive redeploys.
+- **Persistent state**: OpenClaw state, Tailscale identity, your home directory, and Homebrew live on the volume at `/data`. A new OpenClaw build runs Doctor before starting Gateway; routine boots use Gateway state admission. Disposable database inspection snapshots and plugin execution copies use container temporary storage.
 - **Tools for skills included.** `gh`, `gog`, Claude Code, Codex, `jq`, `tmux`,
   and ImageMagick (for iPhone HEIC photos) ship as a pinned baseline; Homebrew
   and `npm install -g` add or update tools on the volume.

@@ -12,7 +12,7 @@ index 3abe74e9..5ee95118 100644
 @@ -69,6 +70,128 @@ function gatewayInvocation(program) {
    return options && !options.commandOptions.includes("--reset") ? options : undefined;
  }
-
+ 
 +function imageActivation(invocation) {
 +  const receipt = process.env.OPENCLAW_DOCKER_ACTIVATION_RECEIPT;
 +  if (!receipt) {
@@ -186,17 +186,24 @@ index 3abe74e9..5ee95118 100644
    process.execve(program, command, process.env);
 diff --git a/src/plugins/plugin-generation-artifact.hashing.test.ts b/src/plugins/plugin-generation-artifact.hashing.test.ts
 new file mode 100644
-index 00000000..b2350e6a
+index 00000000..47c643b0
 --- /dev/null
 +++ b/src/plugins/plugin-generation-artifact.hashing.test.ts
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,126 @@
 +import { createHash } from "node:crypto";
 +import fs from "node:fs";
++import { tmpdir } from "node:os";
 +import path from "node:path";
 +import { afterEach, expect, it, vi } from "vitest";
 +import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
++import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 +import { capturePluginGenerationArtifact } from "./plugin-generation-artifact.js";
 +import { withPluginSourceCaptureDirectory } from "./plugin-package-metadata-capture.js";
++import { withPluginSourceCaptureStorage } from "./plugin-source-capture-context.js";
++import {
++  createPluginNativeCaptureRoot,
++  createPluginSourceCaptureRoot,
++} from "./plugin-source-capture-directory.js";
 +
 +const temporaryDirectories = useAutoCleanupTempDirTracker(afterEach);
 +const artifacts: ReturnType<typeof capturePluginGenerationArtifact>[] = [];
@@ -249,6 +256,65 @@ index 00000000..b2350e6a
 +  fs.writeFileSync(source, "changed original");
 +  expect(() => artifact.assertSourceCurrent()).toThrow("Plugin source changed");
 +  expect(fs.readFileSync(artifact.resolve(source))).toEqual(bytes);
++});
++
++it("keeps execution copies in temporary storage while native captures retain state placement", async () => {
++  await withOpenClawTestState({ label: "plugin-execution-copy-placement" }, async (state) => {
++    const temporary = fs.realpathSync(temporaryDirectories.make("plugin-execution-temp-"));
++    for (const name of ["TMPDIR", "TMP", "TEMP"]) {
++      vi.stubEnv(name, temporary);
++    }
++    const source = state.path("plugin");
++    fs.mkdirSync(source);
++    fs.writeFileSync(path.join(source, "index.cjs"), "module.exports = 42;");
++    const native = createPluginNativeCaptureRoot();
++    const worker = createPluginSourceCaptureRoot(state.stateDir, "openclaw-model-catalog-");
++    try {
++      const ordinary = capturePluginGenerationArtifact(source);
++      artifacts.push(ordinary);
++      expect(path.relative(tmpdir(), ordinary.boundaryRoot).startsWith("..")).toBe(false);
++      expect(path.relative(tmpdir(), worker.directory).startsWith("..")).toBe(false);
++      expect(
++        path
++          .relative(path.join(state.stateDir, "tmp", "plugin-captures"), native.directory)
++          .startsWith(".."),
++      ).toBe(false);
++      const explicit = withPluginSourceCaptureStorage(
++        { stateDir: state.stateDir, placement: "state" },
++        () => capturePluginGenerationArtifact(source),
++      );
++      artifacts.push(explicit);
++      expect(
++        path
++          .relative(path.join(state.stateDir, "tmp", "plugin-captures"), explicit.boundaryRoot)
++          .startsWith(".."),
++      ).toBe(false);
++    } finally {
++      await worker.release();
++      await native.disposeAsync();
++      vi.unstubAllEnvs();
++    }
++  });
++});
++
++it("does not capture its own temporary tree when the source contains temporary storage", () => {
++  const source = fs.realpathSync(temporaryDirectories.make("plugin-containing-temp-"));
++  const temporary = path.join(source, "runtime-temporary");
++  fs.mkdirSync(temporary);
++  fs.writeFileSync(path.join(source, "index.cjs"), "module.exports = 42;");
++  for (const name of ["TMPDIR", "TMP", "TEMP"]) {
++    vi.stubEnv(name, temporary);
++  }
++  try {
++    const artifact = capturePluginGenerationArtifact(source);
++    artifacts.push(artifact);
++    expect(fs.readFileSync(artifact.resolve(path.join(source, "index.cjs")), "utf8")).toBe(
++      "module.exports = 42;",
++    );
++    expect(() => artifact.assertSourceCurrent()).not.toThrow();
++  } finally {
++    vi.unstubAllEnvs();
++  }
 +});
 diff --git a/src/plugins/plugin-generation-file-capture.ts b/src/plugins/plugin-generation-file-capture.ts
 index 81a241c6..ba9b4d88 100644
@@ -325,6 +391,245 @@ index 5d2fcffc..cb226ea6 100644
          events.push(file);
        }
      },
+diff --git a/src/plugins/plugin-package-metadata-capture.ts b/src/plugins/plugin-package-metadata-capture.ts
+index 6da58805..e06621f0 100644
+--- a/src/plugins/plugin-package-metadata-capture.ts
++++ b/src/plugins/plugin-package-metadata-capture.ts
+@@ -11,7 +11,7 @@ import { createSqliteLifecycleAggregateError } from "../infra/sqlite-lifecycle-e
+ import { escapeRegExp } from "../shared/regexp.js";
+ import {
+   retainLoadedPluginSourceCapture,
+-  retainPluginSourceCaptureInstance,
++  retainPluginExecutionSourceCaptureInstance,
+ } from "./plugin-source-capture-directory.js";
+ import { PLUGIN_SOURCE_CAPTURE_PREFIX } from "./plugin-source-capture-path.js";
+ import { isPluginSourceEntry } from "./plugin-source-file.js";
+@@ -643,7 +643,8 @@ export function withPluginSourceCaptureDirectory<T>(
+ /** Admissions and failed-input receipts belong to one source acquisition lifetime. */
+ export function createPluginSourceCapture() {
+   const override = sourceCaptureDirectory.getStore();
+-  const instance = override === undefined ? retainPluginSourceCaptureInstance() : undefined;
++  const instance =
++    override === undefined ? retainPluginExecutionSourceCaptureInstance() : undefined;
+   let created: string | undefined;
+   let directory: string;
+   try {
+diff --git a/src/plugins/plugin-source-capture-directory.test.ts b/src/plugins/plugin-source-capture-directory.test.ts
+index 96fac6ca..b2988bc5 100644
+--- a/src/plugins/plugin-source-capture-directory.test.ts
++++ b/src/plugins/plugin-source-capture-directory.test.ts
+@@ -1,6 +1,7 @@
+ import { execFileSync, spawn, spawnSync } from "node:child_process";
+ import fs from "node:fs";
+ import fsPromises from "node:fs/promises";
++import { tmpdir } from "node:os";
+ import path from "node:path";
+ import { createInterface } from "node:readline";
+ import { afterEach, beforeEach, expect, it, vi } from "vitest";
+@@ -24,6 +25,7 @@ import {
+   retainPluginSourceCaptureInstance,
+ } from "./plugin-source-capture-directory.js";
+ import { sweepPluginSourceCapturesForTest } from "./plugin-source-capture-directory.test-support.js";
++import { resolvePluginSourceCaptureFallbackPrefix } from "./plugin-source-capture-path.js";
+ import { pluginProcessRuntimeEntrypoints } from "./process-runtime.test-support.js";
+ 
+ const temp = useAutoCleanupTempDirTracker(afterEach);
+@@ -62,11 +64,18 @@ function capturePaths(
+   boundaryRoot: string,
+   capturedFile: string,
+   worker = false,
++  temporaryRoot = tmpdir(),
+ ) {
+   const captureRoot = worker ? path.dirname(boundaryRoot) : boundaryRoot;
+   const instanceRoot = path.dirname(path.dirname(captureRoot));
+   // Check ownership before aging a path derived from a child or an older implementation.
+-  expect(path.dirname(instanceRoot)).toBe(path.join(stateDir, "tmp", "plugin-captures"));
++  const managed = path.join(stateDir, "tmp", "plugin-captures");
++  if (path.dirname(instanceRoot) !== managed) {
++    expect(path.dirname(instanceRoot)).toBe(fs.realpathSync(temporaryRoot));
++    expect(
++      path.basename(instanceRoot).startsWith(resolvePluginSourceCaptureFallbackPrefix(stateDir)),
++    ).toBe(true);
++  }
+   return {
+     boundaryRoot,
+     capturedFile,
+@@ -204,8 +213,10 @@ it("retains mapped addons once through disposal and exit, then reclaims them at
+     result.stdout,
+   );
+   expect(observed.attempts).toBe(0);
+-  expect(observed.warnings).toHaveLength(1);
+-  expect(observed.warnings[0]).toContain("retained-by-loaded-module");
++  expect(observed.warnings).toHaveLength(2);
++  expect(observed.warnings.every((warning) => warning.includes("retained-by-loaded-module"))).toBe(
++    true,
++  );
+   expect(result.stderr).not.toContain("cleanup failed");
+   expect(observed.directories.every((directory) => fs.existsSync(directory))).toBe(true);
+   // A new process has no mapped image and acquires released custody; no one-hour wait.
+@@ -216,7 +227,7 @@ it("retains mapped addons once through disposal and exit, then reclaims them at
+     OPENCLAW_CONFIG_PATH: path.join(stateDir, "openclaw.json"),
+   });
+   expect(warning).not.toHaveBeenCalled();
+-  expect(fs.readdirSync(path.join(stateDir, "tmp", "plugin-captures"))).toEqual([]);
++  expect(observed.directories.every((directory) => !fs.existsSync(directory))).toBe(true);
+ });
+ 
+ it("disposes captures while sibling workers remain active", () => {
+@@ -229,6 +240,7 @@ it("disposes captures while sibling workers remain active", () => {
+       "-e",
+       `
+       import { once } from "node:events";
++      import fs from "node:fs";
+       import { Worker } from "node:worker_threads";
+       import { createPluginSourceCapture } from ${JSON.stringify(resolveRuntimeWorkerUrl(pluginProcessRuntimeEntrypoints.metadataCapture).href)};
+       const workers = Array.from({ length: 2 }, () => new Worker(
+@@ -238,8 +250,12 @@ it("disposes captures while sibling workers remain active", () => {
+       await Promise.all(workers.map(worker => once(worker, "message")));
+       try {
+         for (let reload = 0; reload < 12; reload++) {
+-          createPluginSourceCapture().dispose();
+-          await createPluginSourceCapture().disposeAsync();
++          const synchronous = createPluginSourceCapture();
++          const asynchronous = createPluginSourceCapture();
++          const directories = [synchronous.directory, asynchronous.directory];
++          synchronous.dispose();
++          await asynchronous.disposeAsync();
++          if (directories.some(directory => fs.existsSync(directory))) throw new Error("released capture survived disposal");
+         }
+       } finally {
+         const exits = workers.map(worker => once(worker, "exit"));
+@@ -254,7 +270,7 @@ it("disposes captures while sibling workers remain active", () => {
+   expect(result.error).toBeUndefined();
+   expect(result.status, result.stderr).toBe(0);
+   expect(result.stdout).toBe("captures disposed with workers alive");
+-  expect(fs.readdirSync(path.join(stateDir, "tmp", "plugin-captures"))).toEqual([]);
++  expect(fs.existsSync(path.join(stateDir, "tmp", "plugin-captures"))).toBe(false);
+ });
+ 
+ it.each(["natural", "failure", "explicit", "signal"])(
+@@ -299,9 +315,12 @@ it.each(["natural", "failure", "explicit", "signal"])(
+       mode === "natural" ? 0 : mode === "failure" ? 1 : mode === "explicit" ? 2 : 143,
+     );
+     const [directory, , nativeRoots] = result.stdout.trim().split("\n");
+-    expect(directory).toContain(path.join(stateDir, "tmp", "plugin-captures"));
++    expect(directory).toContain(
++      path.join(fs.realpathSync(tmpdir()), resolvePluginSourceCaptureFallbackPrefix(stateDir)),
++    );
+     expect(fs.existsSync(directory!)).toBe(false);
+     const [retained, pending] = JSON.parse(nativeRoots!) as [string, string];
++    expect(retained).toContain(path.join(stateDir, "tmp", "plugin-captures"));
+     expect(fs.readFileSync(path.join(retained, "native"), "utf8")).toBe("published native bytes");
+     expect(fs.existsSync(pending)).toBe(false);
+     expect(fs.existsSync(path.join(path.dirname(path.dirname(retained)), "owner.sqlite"))).toBe(
+@@ -327,9 +346,6 @@ async function startCliCapture(stateDir: string, source: string, worker: boolean
+       env: {
+         ...process.env,
+         OPENCLAW_STATE_DIR: stateDir,
+-        TMPDIR: stateDir,
+-        TMP: stateDir,
+-        TEMP: stateDir,
+       },
+       stdio: ["pipe", "pipe", "pipe"],
+       timeout: 15_000,
+@@ -387,11 +403,9 @@ it("metadata boot preserves recent captures and legacy files with another produc
+   const old = await abandonCapture(stateDir, source);
+   const recent = await abandonCapture(stateDir, source);
+   age(old.instanceRoot);
+-  const legacy = path.join(temp.make("plugin-capture-legacy-"), "openclaw-plugin-build-legacy");
+-  fs.mkdirSync(legacy);
++  const legacy = temp.make("openclaw-plugin-build-legacy-");
+   fs.writeFileSync(path.join(legacy, "sentinel"), "legacy files have no custody token");
+   age(legacy);
+-  vi.stubEnv("TMPDIR", path.dirname(legacy));
+ 
+   const time = createGatewaySchedulerClock();
+   const scheduler = createTestGatewayScheduler(time.clock);
+diff --git a/src/plugins/plugin-source-capture-directory.ts b/src/plugins/plugin-source-capture-directory.ts
+index d39837c3..75dc52b2 100644
+--- a/src/plugins/plugin-source-capture-directory.ts
++++ b/src/plugins/plugin-source-capture-directory.ts
+@@ -21,6 +21,7 @@ import {
+   type TokenlessCaptureSweep,
+ } from "./plugin-source-capture-cleanup.js";
+ import {
++  getPluginSourceCaptureStorage,
+   pluginSourceCaptureMaintenance,
+   resolvePluginSourceCaptureStorage,
+   runInPluginSourceCaptureContext,
+@@ -408,6 +409,11 @@ function createCaptureDirectory(instance: Instance, prefix: string, kind = "capt
+       const captures = path.join(canonical, kind);
+       fs.mkdirSync(captures, { mode: 0o700 });
+       const capture = fs.mkdtempSync(path.join(captures, prefix));
++      // A source may contain TMPDIR. Exclude this owned scratch tree from its
++      // own capture without excluding unrelated files elsewhere in temporary storage.
++      if (fallback) {
++        instance.managedRoot = canonical;
++      }
+       instance.root = canonical;
+       instance.token = token;
+       ownedRoots.add(canonical);
+@@ -644,9 +650,17 @@ export function createPluginNativeCaptureRoot(
+   }
+ }
+ 
++/** Execution copies use process-local scratch unless an inspection selects its storage. */
++export function retainPluginExecutionSourceCaptureInstance(stateDir?: string) {
++  return retainPluginSourceCaptureInstance(
++    stateDir,
++    getPluginSourceCaptureStorage()?.placement ?? "temporary",
++  );
++}
++
+ /** The producer retains this root until its worker has confirmed exit. */
+ export function createPluginSourceCaptureRoot(stateDir: string, prefix: string) {
+-  const instance = retainPluginSourceCaptureInstance(stateDir);
++  const instance = retainPluginExecutionSourceCaptureInstance(stateDir);
+   try {
+     const directory = instance.createDirectory(prefix);
+     return {
+diff --git a/src/plugins/plugin-source-capture-recovery.test.ts b/src/plugins/plugin-source-capture-recovery.test.ts
+index 33890df1..c6fcab0e 100644
+--- a/src/plugins/plugin-source-capture-recovery.test.ts
++++ b/src/plugins/plugin-source-capture-recovery.test.ts
+@@ -27,6 +27,7 @@ import {
+   retainPluginSourceCaptureInstance,
+ } from "./plugin-source-capture-directory.js";
+ import { sweepPluginSourceCapturesForTest } from "./plugin-source-capture-directory.test-support.js";
++import { resolvePluginSourceCaptureFallbackPrefix } from "./plugin-source-capture-path.js";
+ 
+ const temp = useAutoCleanupTempDirTracker((cleanup) =>
+   afterEach(async () => {
+@@ -355,6 +356,10 @@ it.each(["sync", "async"])("preserves custody after partial %s disposal", async
+     expect(fs.readFileSync(payload, "utf8")).toBe("export default 1");
+     const tokenless = fs
+       .readdirSync(path.dirname(root))
++      .filter(
++        (name) =>
++          mode !== "async" || name.startsWith(resolvePluginSourceCaptureFallbackPrefix(stateDir)),
++      )
+       .filter((name) => !fs.existsSync(path.join(path.dirname(root), name, "owner.sqlite")));
+     expect(tokenless).toEqual([]);
+   } finally {
+@@ -716,11 +721,13 @@ it("preserves artifact setup failure and borrowed custody when partial removal f
+   const cleanup = new Error("Fixture partial capture removal refused");
+   let borrowed: ReturnType<typeof retainPluginSourceCaptureInstance> | undefined;
+   let created: string | undefined;
+-  const retain = captureDirectory.retainPluginSourceCaptureInstance;
+-  vi.spyOn(captureDirectory, "retainPluginSourceCaptureInstance").mockImplementation((...args) => {
+-    borrowed = retain(...args);
+-    return borrowed;
+-  });
++  const retain = captureDirectory.retainPluginExecutionSourceCaptureInstance;
++  vi.spyOn(captureDirectory, "retainPluginExecutionSourceCaptureInstance").mockImplementation(
++    (...args) => {
++      borrowed = retain(...args);
++      return borrowed;
++    },
++  );
+   const chmod = fs.chmodSync.bind(fs);
+   vi.spyOn(fs, "chmodSync").mockImplementation((target, mode) => {
+     if (typeof target === "string" && path.dirname(target) === path.dirname(first)) {
 diff --git a/src/plugins/plugin-source-file.ts b/src/plugins/plugin-source-file.ts
 index 4cf860d7..f347911a 100644
 --- a/src/plugins/plugin-source-file.ts
@@ -344,7 +649,7 @@ index 4cf860d7..f347911a 100644
 +    sourceIdentity: pluginSourceStatIdentity(admitted),
 +  };
  }
-
+ 
  export function copyPluginSourceFile(
 @@ -193,13 +191,11 @@ export function copyPluginSourceFile(
          mode,
@@ -380,7 +685,7 @@ index c28e4141..146f010b 100644
 @@ -101,41 +102,49 @@ beforeEach(() => {
    });
  });
-
+ 
 -it("waits for temporary schema custody before admitting one discovery snapshot", async () => {
 -  await withTempDir("openclaw-discovery-cold-admission-", async (root) => {
 -    const source = path.join(root, "source");
@@ -450,7 +755,7 @@ index c28e4141..146f010b 100644
 +    });
 +  },
 +);
-
+ 
  it.each([
    "maintenance",
 +  "namespace default",
@@ -562,7 +867,7 @@ index 8e84f7f0..894d3e4b 100644
  const args = process.argv.slice(2);
 @@ -58,6 +59,107 @@ if (args.includes('doctor')) {
  }
-
+ 
  describe.skipIf(process.platform === "win32")("Docker image activation", () => {
 +  it.for(["buildId", "railwayPatchDigest"])(
 +    "repairs a changed %s once and admits routine boots through the original Gateway",
