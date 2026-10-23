@@ -13,3 +13,4 @@
 !tools/package.json
 !tools/package-lock.json
 !scripts/openclaw-plugin-capture.patch
+!scripts/check-slack-routing.ts
