@@ -149,7 +149,7 @@ tailscale_field() {
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   log "build"
-  docker build -q -t "$image" . >/dev/null
+  docker build --progress=plain -t "$image" .
   pass "the image builds"
 fi
 
