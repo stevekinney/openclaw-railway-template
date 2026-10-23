@@ -21,7 +21,7 @@ Before you deploy, turn on **MagicDNS** and **HTTPS certificates** in the Tailsc
 
 ## Startup and Restarts
 
-The image puts disposable SQLite inspection snapshots on fast container storage automatically. Full Doctor repair runs when the OpenClaw build or applied patch changes; routine and crash restarts use Gateway state admission with the existing ownership checks. Failed Doctor runs never mark an image activated. Persistent state and the private activation receipt stay on the volume.
+The image puts disposable SQLite inspection snapshots on fast container storage automatically. Full Doctor repair runs when the OpenClaw build or applied patch changes; routine and crash restarts use Gateway state admission with the existing ownership checks. Failed Doctor runs never mark an image activated. Persistent state and the private activation receipt stay on the volume. Doctor retains the newest three sealed standalone recovery snapshots for up to 30 days; incomplete snapshots and update recovery captures stay protected.
 
 The health check uses `/startupz` with a 600-second window. Disposable database inspection snapshots and ordinary plugin execution copies use container temporary storage, while published native plugin artifacts stay on the volume. Use `railway restart --service openclaw --yes` to restart the current image without rebuilding. The [upgrade guide](https://github.com/stevekinney/openclaw-railway-template/blob/main/documentation/UPGRADING.md) covers upgrades and restoring backups.
 
