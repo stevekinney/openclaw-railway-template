@@ -4,10 +4,55 @@
 # binaries are taken from the official image. Dependabot tracks this pin.
 FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
 
-# The OpenClaw release this template deploys. This line is the single source of
-# truth for the version: an upgrade changes the tag and digest together and
-# nothing else. See documentation/UPGRADING.md.
-FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b53fdc01f5108f7db11de38fd0ee6dbe5
+# The release supplies production dependencies and the existing plugin selection.
+FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b53fdc01f5108f7db11de38fd0ee6dbe5 AS openclaw-release
+
+# Rebuild the pinned release with the reviewed cold-capture engine fix. Keep the
+# patch tied to this source revision; an upstream upgrade must revalidate it.
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS bun
+FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS openclaw-build
+WORKDIR /app
+ADD --checksum=sha256:3f3f54c80914d8de5f5370ec417cece495d9dd9a2d329b36b63764bafa80d2c7 https://codeload.github.com/openclaw/openclaw/tar.gz/1b58cb9a1b4f4353e1add63c8506db4d890962e8 /tmp/openclaw-source.tar.gz
+RUN tar -xzf /tmp/openclaw-source.tar.gz --strip-components=1 -C /app \
+ && rm /tmp/openclaw-source.tar.gz \
+ && corepack enable
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+RUN pnpm install --frozen-lockfile
+COPY scripts/openclaw-plugin-capture.patch /tmp/openclaw-plugin-capture.patch
+RUN git apply --check /tmp/openclaw-plugin-capture.patch \
+ && git apply /tmp/openclaw-plugin-capture.patch \
+ && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));'
+RUN pnpm test src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1
+ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
+    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+    OPENCLAW_PREFER_PNPM=1 \
+    OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=4352
+RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/release-extensions \
+    set -eu; \
+    selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
+    OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
+    pnpm ui:build; \
+    node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); fs.writeFileSync(file, JSON.stringify(information));'; \
+    OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
+    find dist -name node_modules -prune -exec rm -rf {} +; \
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
+    node -e 'const fs = require("node:fs"); for (const plugin of fs.readdirSync("/tmp/release-extensions")) { const source = "/tmp/release-extensions/" + plugin + "/node_modules"; if (fs.existsSync(source)) fs.cpSync(source, "dist/extensions/" + plugin + "/node_modules", { recursive: true, verbatimSymlinks: true }); }'; \
+    node -e 'process.stdout.write(JSON.stringify(require("node:fs").readdirSync("dist", { recursive: true }).toSorted()))' > /tmp/openclaw-build-files.json
+
+# Extend the release with regenerated runtime bundles from the reviewed patch.
+# See documentation/UPGRADING.md before changing the release pin.
+FROM openclaw-release
+
+# Replace generated artifacts instead of overlaying obsolete release bundles.
+RUN rm -rf /app/dist
+
+# All runtime bundles and plugin assets come from the same patched source build.
+# The Control UI is rebuilt against the same runtime identity; production native
+# dependencies stay pinned above.
+COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
+COPY --from=openclaw-build --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
+COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
+RUN test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"
 
 # Railway mounts volumes owned by root, so the container starts as root only
 # long enough for scripts/entrypoint.sh to prepare /data. The entrypoint then
@@ -24,6 +69,8 @@ USER root
 # OPENCLAW_SUPERVISOR_MODE=external tells OpenClaw that Railway owns the process
 # lifecycle, which refuses in-place self-updates and service installs.
 ENV OPENCLAW_HOME=/data \
+    XDG_CACHE_HOME=/tmp \
+    OPENCLAW_DOCKER_ACTIVATION_RECEIPT=/data/.openclaw/railway-image-activation.json \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \
     OPENCLAW_NO_AUTO_UPDATE=1

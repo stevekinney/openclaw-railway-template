@@ -60,6 +60,9 @@ export default defineRailway(() => {
     // No PORT variable: Railway then injects PORT=8080, where the sidecar
     // relays health checks.
     env: {
+      // Doctor's disposable SQLite read snapshots belong on fast container
+      // storage; HOME is on the slower persistent volume for credentials.
+      XDG_CACHE_HOME: "/tmp",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
       // Used once, to log the container in to your tailnet on first boot.
       TS_AUTHKEY: preserve(),

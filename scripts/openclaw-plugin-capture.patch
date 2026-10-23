@@ -1,0 +1,670 @@
+diff --git a/docker-entrypoint.mjs b/docker-entrypoint.mjs
+index 3abe74e9..5ee95118 100644
+--- a/docker-entrypoint.mjs
++++ b/docker-entrypoint.mjs
+@@ -1,5 +1,6 @@
+ // Image activation owns unattended retained-volume repair; ordinary CLI startup only admits state.
+ import { spawn } from "node:child_process";
++import { createHash, randomUUID } from "node:crypto";
+ import fs from "node:fs";
+ import os from "node:os";
+ import path from "node:path";
+@@ -69,6 +70,128 @@ function gatewayInvocation(program) {
+   return options && !options.commandOptions.includes("--reset") ? options : undefined;
+ }
+
++function imageActivation(invocation) {
++  const receipt = process.env.OPENCLAW_DOCKER_ACTIVATION_RECEIPT;
++  if (!receipt) {
++    return undefined;
++  }
++  if (!path.isAbsolute(receipt)) {
++    throw new Error("OPENCLAW_DOCKER_ACTIVATION_RECEIPT must be an absolute path");
++  }
++  const digest = createHash("sha256")
++    .update(fs.readFileSync(path.join(root, "dist/build-info.json")))
++    .update(fs.readFileSync(fileURLToPath(import.meta.url)))
++    .update(JSON.stringify(invocation.rootOptions))
++    .update(
++      JSON.stringify([
++        fs.realpathSync(process.cwd()),
++        os.homedir(),
++        ...["HOME", "OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"].map((name) => {
++          const value = process.env[name];
++          if (!value) {
++            return null;
++          }
++          const absolute = path.resolve(value.replace(/^~(?=\/|$)/u, os.homedir()));
++          try {
++            return [value, fs.realpathSync(absolute)];
++          } catch (error) {
++            if (error?.code !== "ENOENT") {
++              throw error;
++            }
++            return [value, absolute];
++          }
++        }),
++      ]),
++    )
++    .digest("hex");
++  return { receipt, digest };
++}
++
++function assertActivationParent(receipt) {
++  const parent = path.dirname(receipt);
++  const stat = fs.lstatSync(parent);
++  if (!stat.isDirectory() || stat.uid !== process.getuid() || (stat.mode & 0o022) !== 0) {
++    throw new Error("Docker activation receipt requires a private Gateway-owned directory");
++  }
++  return parent;
++}
++
++function activationCompleted(activation) {
++  if (!activation) {
++    return false;
++  }
++  let descriptor;
++  try {
++    assertActivationParent(activation.receipt);
++    descriptor = fs.openSync(activation.receipt, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
++    const stat = fs.fstatSync(descriptor);
++    if (
++      !stat.isFile() ||
++      stat.uid !== process.getuid() ||
++      stat.nlink !== 1 ||
++      (stat.mode & 0o777) !== 0o600 ||
++      stat.size > 4096
++    ) {
++      throw new Error("Docker activation receipt must be a private file owned by the Gateway user");
++    }
++    let receipt;
++    try {
++      receipt = JSON.parse(fs.readFileSync(descriptor, "utf8"));
++    } catch (error) {
++      if (error instanceof SyntaxError) {
++        return false;
++      }
++      throw error;
++    }
++    return (
++      receipt !== null &&
++      typeof receipt === "object" &&
++      !Array.isArray(receipt) &&
++      Object.keys(receipt).toSorted().join(",") === "digest,version" &&
++      receipt.version === 1 &&
++      receipt.digest === activation.digest
++    );
++  } catch (error) {
++    if (error?.code === "ENOENT") {
++      return false;
++    }
++    throw error;
++  } finally {
++    if (descriptor !== undefined) {
++      fs.closeSync(descriptor);
++    }
++  }
++}
++
++function recordActivation(activation) {
++  if (!activation) {
++    return;
++  }
++  const parent = path.dirname(activation.receipt);
++  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
++  assertActivationParent(activation.receipt);
++  const temporary = path.join(parent, `.activation-${randomUUID()}`);
++  try {
++    const descriptor = fs.openSync(temporary, "wx", 0o600);
++    try {
++      fs.fchmodSync(descriptor, 0o600);
++      fs.writeFileSync(descriptor, JSON.stringify({ version: 1, digest: activation.digest }));
++      fs.fsyncSync(descriptor);
++    } finally {
++      fs.closeSync(descriptor);
++    }
++    fs.renameSync(temporary, activation.receipt);
++    const directory = fs.openSync(parent, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
++    try {
++      fs.fsyncSync(directory);
++    } finally {
++      fs.closeSync(directory);
++    }
++  } finally {
++    fs.rmSync(temporary, { force: true });
++  }
++}
++
+ try {
+   const program = command[0] && executable(command[0]);
+   if (!program) {
+@@ -76,9 +199,9 @@ try {
+     process.exit(127);
+   }
+   const invocation = gatewayInvocation(program);
+-  if (invocation) {
++  const activation = invocation && imageActivation(invocation);
++  if (invocation && !activationCompleted(activation)) {
+     let interrupted;
+-    let child;
+     for (const signal of ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"]) {
+       process.on(signal, () => {
+         interrupted ??= signal;
+@@ -86,7 +209,7 @@ try {
+         child?.kill(signal === "SIGHUP" || signal === "SIGQUIT" ? "SIGTERM" : signal);
+       });
+     }
+-    child = spawn(
++    const child = spawn(
+       process.execPath,
+       [
+         path.join(root, "openclaw.mjs"),
+@@ -101,16 +224,20 @@ try {
+     child.on("error", (error) => {
+       failure = error;
+     });
+-    const outcome = await new Promise((resolve) =>
+-      child.once("close", (code, signal) => resolve({ code, signal })),
+-    );
++    const outcome = await new Promise((resolve) => {
++      child.once("close", (code, signal) => resolve({ code, signal }));
++    });
+     if (failure) {
+-      throw failure;
++      throw failure instanceof Error ? failure : new Error(String(failure));
+     }
+     const signal = interrupted ?? outcome.signal;
+     if (signal || outcome.code !== 0) {
+       process.exit(signal ? 128 + os.constants.signals[signal] : (outcome.code ?? 1));
+     }
++    recordActivation(activation);
++    console.log("OpenClaw image activation: Doctor completed successfully");
++  } else if (invocation) {
++    console.log("OpenClaw image activation unchanged: continuing to Gateway state admission");
+   }
+   // Replace the adapter so tini continues to supervise the original command directly.
+   process.execve(program, command, process.env);
+diff --git a/src/plugins/plugin-generation-artifact.hashing.test.ts b/src/plugins/plugin-generation-artifact.hashing.test.ts
+new file mode 100644
+index 00000000..b2350e6a
+--- /dev/null
++++ b/src/plugins/plugin-generation-artifact.hashing.test.ts
+@@ -0,0 +1,60 @@
++import { createHash } from "node:crypto";
++import fs from "node:fs";
++import path from "node:path";
++import { afterEach, expect, it, vi } from "vitest";
++import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
++import { capturePluginGenerationArtifact } from "./plugin-generation-artifact.js";
++import { withPluginSourceCaptureDirectory } from "./plugin-package-metadata-capture.js";
++
++const temporaryDirectories = useAutoCleanupTempDirTracker(afterEach);
++const artifacts: ReturnType<typeof capturePluginGenerationArtifact>[] = [];
++afterEach(() => {
++  vi.restoreAllMocks();
++  for (const artifact of artifacts.splice(0)) {
++    artifact.dispose();
++  }
++});
++
++it("inspects copied bytes once for content and the unchanged receipt before admission", () => {
++  const root = fs.realpathSync(temporaryDirectories.make("plugin-receipt-hashing-"));
++  const sourceDirectory = path.join(root, "source");
++  const captureDirectory = path.join(root, "captures");
++  fs.mkdirSync(sourceDirectory);
++  fs.mkdirSync(captureDirectory);
++  const source = path.join(sourceDirectory, "payload.dat");
++  const bytes = Buffer.alloc(2 * 1024 * 1024 + 3, "receipt bytes");
++  fs.writeFileSync(source, bytes);
++  const original = fs.statSync(source, { bigint: true });
++  const readSync = fs.readSync;
++  let copiedBytesInspected = 0;
++  const reads = vi.spyOn(fs, "readSync").mockImplementation((...arguments_) => {
++    const length = Reflect.apply(readSync, fs, arguments_);
++    const current = fs.fstatSync(arguments_[0], { bigint: true });
++    if (
++      current.size === BigInt(bytes.length) &&
++      (current.dev !== original.dev || current.ino !== original.ino)
++    ) {
++      copiedBytesInspected += length;
++    }
++    return length;
++  });
++  const artifact = withPluginSourceCaptureDirectory(captureDirectory, () =>
++    capturePluginGenerationArtifact(sourceDirectory),
++  );
++  artifacts.push(artifact);
++  reads.mockRestore();
++
++  expect(copiedBytesInspected).toBe(bytes.length);
++  const expectedReceipt = createHash("sha256")
++    .update("package-0\0directory\0\0file\0payload.dat\0")
++    .update(String(bytes.length))
++    .update("\0")
++    .update(bytes)
++    .digest("hex");
++  expect(artifact.sourceDigest).toBe(expectedReceipt);
++  expect(fs.readFileSync(artifact.resolve(source))).toEqual(bytes);
++  expect(() => artifact.assertSourceCurrent()).not.toThrow();
++  fs.writeFileSync(source, "changed original");
++  expect(() => artifact.assertSourceCurrent()).toThrow("Plugin source changed");
++  expect(fs.readFileSync(artifact.resolve(source))).toEqual(bytes);
++});
+diff --git a/src/plugins/plugin-generation-file-capture.ts b/src/plugins/plugin-generation-file-capture.ts
+index 81a241c6..ba9b4d88 100644
+--- a/src/plugins/plugin-generation-file-capture.ts
++++ b/src/plugins/plugin-generation-file-capture.ts
+@@ -179,7 +179,8 @@ export function createPluginGenerationFileCapture({
+         fs.unlinkSync(target);
+       }
+       const native = nativeAdmission.materialize(real, inputBoundary, target, stat, source);
+-      let copiedContent: ReturnType<typeof copyPluginSourceFile>;
++      let copiedContent: { contentHash: string; sizeBytes: number } | undefined;
++      let copiedSourceIdentity: string | undefined;
+       if (native) {
+         nativeAdmission.reconcileSourceInputs(inputs);
+       } else if (retainedFile && !retainedReference) {
+@@ -188,25 +189,22 @@ export function createPluginGenerationFileCapture({
+         copiedContent = {
+           contentHash: retainedInput.contentHash,
+           sizeBytes: retainedInput.sizeBytes,
+-          sourceIdentity: pluginSourceInputIdentity(stat),
+         };
++        copiedSourceIdentity = pluginSourceInputIdentity(stat);
+       } else if (captured) {
+         // A second filename for a prefetched entry retains its first bytes and source identity.
+-        copiedContent = copyPluginSourceFile(captured, directory, target, {
+-          hashCopiedContent: true,
++        copiedSourceIdentity = copyPluginSourceFile(captured, directory, target, {
+           copyFile,
+           preserveSourceMode: true,
+-        });
++        }).sourceIdentity;
+       } else {
+-        copiedContent = copyPluginSourceFile(real, inputBoundary, target, {
+-          hashCopiedContent: true,
++        copiedSourceIdentity = copyPluginSourceFile(real, inputBoundary, target, {
+           copyFile,
+-        });
++        }).sourceIdentity;
+         const identity = pluginSourceInputIdentity(stat);
+         if (
+-          copiedContent &&
+-          copiedContent.sourceIdentity !== identity &&
+-          !pluginSourceIdentityChangedOnlyByCtime(identity, copiedContent.sourceIdentity)
++          copiedSourceIdentity !== identity &&
++          !pluginSourceIdentityChangedOnlyByCtime(identity, copiedSourceIdentity)
+         ) {
+           throw new Error(
+             "Plugin source changed while preparing its reload; retry after the edit finishes.",
+@@ -225,7 +223,7 @@ export function createPluginGenerationFileCapture({
+             content.contentHash,
+             content.sizeBytes,
+             native !== undefined,
+-            native?.sourceIdentity ?? (captured ? undefined : copiedContent?.sourceIdentity),
++            native?.sourceIdentity ?? (captured ? undefined : copiedSourceIdentity),
+             native?.sourceBoundary ?? inputBoundary,
+           );
+         },
+diff --git a/src/plugins/plugin-generation-receipt.ts b/src/plugins/plugin-generation-receipt.ts
+index 5d2fcffc..cb226ea6 100644
+--- a/src/plugins/plugin-generation-receipt.ts
++++ b/src/plugins/plugin-generation-receipt.ts
+@@ -72,10 +72,13 @@ export function createPluginGenerationReceipt(prepared?: PluginGenerationReceipt
+         } else {
+           publishContent(file, content);
+         }
+-      } else if (!file.native || finished) {
++      } else if (finished) {
+         readContent(file);
+       }
+       if (!finished) {
++        // Cold ordinary copies have no prepared digest. Inspect them once at
++        // finalization for both their content facts and the raw-byte receipt,
++        // before the artifact verifies original sources or publishes admission.
+         events.push(file);
+       }
+     },
+diff --git a/src/plugins/plugin-source-file.ts b/src/plugins/plugin-source-file.ts
+index 4cf860d7..f347911a 100644
+--- a/src/plugins/plugin-source-file.ts
++++ b/src/plugins/plugin-source-file.ts
+@@ -141,12 +141,10 @@ function copySmallPluginSourceFile(
+   }
+   fs.fchmodSync(copied.fd, mode);
+   assertCurrent();
+-  return hashCopiedContent
+-    ? {
+-        ...hashPluginSourceDescriptor(copied.fd),
+-        sourceIdentity: pluginSourceStatIdentity(admitted),
+-      }
+-    : undefined;
++  return {
++    ...(hashCopiedContent ? hashPluginSourceDescriptor(copied.fd) : {}),
++    sourceIdentity: pluginSourceStatIdentity(admitted),
++  };
+ }
+
+ export function copyPluginSourceFile(
+@@ -193,13 +191,11 @@ export function copyPluginSourceFile(
+         mode,
+         sourceHardlinks: "allow",
+       });
+-      // The initial hash belongs to the copied descriptor; receipts still recheck its path.
+-      return options.hashCopiedContent
+-        ? {
+-            ...hashPluginSourceDescriptor(copied.fd),
+-            sourceIdentity: pluginSourceStatIdentity(admitted, copied.sourceIdentity),
+-          }
+-        : undefined;
++      // Optional content hashes use the copied descriptor; receipts still recheck its path.
++      return {
++        ...(options.hashCopiedContent ? hashPluginSourceDescriptor(copied.fd) : {}),
++        sourceIdentity: pluginSourceStatIdentity(admitted, copied.sourceIdentity),
++      };
+     } catch (error) {
+       // fs-safe wraps native failures; retain the disk-full code and detail that
+       // plugin-load diagnostics use to explain how to recover.
+diff --git a/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts b/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
+index c28e4141..146f010b 100644
+--- a/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
++++ b/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
+@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
+ import fs from "node:fs";
+ import path from "node:path";
+ import { beforeEach, expect, it, vi } from "vitest";
++import { GatewayLockNamespaceError } from "../infra/gateway-lock-payload.js";
+ import { StateDatabaseAdmissionPendingError } from "../infra/gateway-state-owner-record.js";
+ import { cleanupSnapshotOperations } from "../infra/sqlite-readonly-location-cleanup.js";
+ import { AsyncWorkScope, getAsyncWorkSignal } from "../shared/async-work-scope.js";
+@@ -101,41 +102,49 @@ beforeEach(() => {
+   });
+ });
+
+-it("waits for temporary schema custody before admitting one discovery snapshot", async () => {
+-  await withTempDir("openclaw-discovery-cold-admission-", async (root) => {
+-    const source = path.join(root, "source");
+-    fs.writeFileSync(source, "mock snapshot source; never opened as SQLite");
+-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+-    try {
+-      mocks.assertFresh.mockImplementation(() => {
+-        if (performance.now() < 9_000) {
+-          throw new StateDatabaseAdmissionPendingError(source, "temporary schema custody");
+-        }
+-      });
+-      const operation = vi.fn(async () => "admitted");
+-      const read = withOpenClawStateDatabaseReadSnapshot(operation, {
+-        path: source,
+-        admissionTimeoutMs: 300_000,
+-      });
+-      const outcome = read.then(
+-        (value) => ({ value }),
+-        (error: unknown) => ({ error }),
+-      );
+-      expect(mocks.capture).not.toHaveBeenCalled();
+-      expect(mocks.prepare).not.toHaveBeenCalled();
+-      expect(operation).not.toHaveBeenCalled();
+-      await vi.advanceTimersByTimeAsync(9_000);
+-      expect(await outcome).toEqual({ value: "admitted" });
+-      expect(operation).toHaveBeenCalledOnce();
+-      expect(mocks.cleanup).toHaveBeenCalledOnce();
+-    } finally {
+-      vi.useRealTimers();
+-    }
+-  });
+-});
++it.each(["schema custody", "foreign PID namespace"])(
++  "waits for %s before admitting one discovery snapshot",
++  async (kind) => {
++    await withTempDir("openclaw-discovery-cold-admission-", async (root) => {
++      const source = path.join(root, "source");
++      fs.writeFileSync(source, "mock snapshot source; never opened as SQLite");
++      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
++      try {
++        mocks.assertFresh.mockImplementation(() => {
++          if (performance.now() < 9_000) {
++            throw kind === "schema custody"
++              ? new StateDatabaseAdmissionPendingError(source, "temporary schema custody")
++              : new GatewayLockNamespaceError({ pid: 42 });
++          }
++        });
++        const operation = vi.fn(async () => "admitted");
++        const read = withOpenClawStateDatabaseReadSnapshot(operation, {
++          path: source,
++          admissionTimeoutMs: 300_000,
++        });
++        const outcome = read.then(
++          (value) => ({ value }),
++          (error: unknown) => ({ error }),
++        );
++        expect(mocks.capture).not.toHaveBeenCalled();
++        expect(mocks.prepare).not.toHaveBeenCalled();
++        expect(operation).not.toHaveBeenCalled();
++        await vi.advanceTimersByTimeAsync(9_000);
++        expect(await outcome).toEqual({ value: "admitted" });
++        expect(operation).toHaveBeenCalledOnce();
++        expect(mocks.cleanup).toHaveBeenCalledOnce();
++      } finally {
++        vi.useRealTimers();
++      }
++    });
++  },
++);
+
+ it.each([
+   "maintenance",
++  "namespace default",
++  "namespace exhausted",
++  "namespace cancelled",
+   "other database",
+   "default",
+   "exhausted",
+@@ -148,10 +157,12 @@ it.each([
+     const refusal =
+       kind === "maintenance"
+         ? new Error("genuine offline maintenance")
+-        : new StateDatabaseAdmissionPendingError(
+-            kind === "other database" ? path.join(root, "other") : source,
+-            "temporary schema custody",
+-          );
++        : kind.startsWith("namespace")
++          ? new GatewayLockNamespaceError({ pid: 42 })
++          : new StateDatabaseAdmissionPendingError(
++              kind === "other database" ? path.join(root, "other") : source,
++              "temporary schema custody",
++            );
+     const caller = new AsyncWorkScope();
+     const cancelled = new Error("caller closed while waiting for schema custody");
+     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+@@ -163,7 +174,7 @@ it.each([
+       const read = caller.track(() =>
+         withOpenClawStateDatabaseReadSnapshot(operation, {
+           path: source,
+-          admissionTimeoutMs: kind === "default" ? undefined : 300_000,
++          admissionTimeoutMs: kind.endsWith("default") ? undefined : 300_000,
+         }),
+       );
+       let settled = false;
+@@ -176,23 +187,22 @@ it.each([
+           settled = true;
+           return result;
+         });
+-      if (kind === "exhausted") {
++      if (kind.endsWith("exhausted")) {
+         await vi.advanceTimersByTimeAsync(299_999);
+         expect(settled).toBe(false);
+         await vi.advanceTimersByTimeAsync(1);
+-      } else if (kind === "cancelled") {
++      } else if (kind.endsWith("cancelled")) {
+         caller.beginClose(cancelled);
+       } else if (kind === "shutdown") {
+         await cleanupSnapshotOperations();
+       }
+       expect(await outcome).toMatchObject({
+         error: {
+-          cause:
+-            kind === "cancelled"
+-              ? { name: "AbortError", cause: cancelled }
+-              : kind === "shutdown"
+-                ? { name: "AbortError" }
+-                : refusal,
++          cause: kind.endsWith("cancelled")
++            ? { name: "AbortError", cause: cancelled }
++            : kind === "shutdown"
++              ? { name: "AbortError" }
++              : refusal,
+         },
+       });
+       expect(mocks.capture).not.toHaveBeenCalled();
+diff --git a/src/state/openclaw-state-db-readonly.ts b/src/state/openclaw-state-db-readonly.ts
+index b3f00ad7..9dc44d29 100644
+--- a/src/state/openclaw-state-db-readonly.ts
++++ b/src/state/openclaw-state-db-readonly.ts
+@@ -5,6 +5,7 @@ import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
+ import { sleepWithAbort } from "@openclaw/retry";
+ import { acquireWithWait } from "../infra/acquire-with-wait.js";
+ import { hasErrnoCode } from "../infra/errno.js";
++import { GatewayLockNamespaceError } from "../infra/gateway-lock-payload.js";
+ import { StateDatabaseAdmissionPendingError } from "../infra/gateway-state-owner-record.js";
+ import { SqliteCoordinatorError } from "../infra/sqlite-lifecycle-errors.js";
+ import {
+@@ -126,6 +127,8 @@ export async function withOpenClawStateDatabaseReadSnapshot<T>(
+     let prepared: AsyncPreparedSqliteReadOnlyLocation;
+     try {
+       // Wait only before capturing private bytes; callbacks and cleanup must never replay.
++      // A crashed container can leave a fresh foreign-namespace heartbeat. Recheck
++      // its custody within the caller budget; never read through uncertain ownership.
+       admission = await acquireWithWait({
+         acquire: () => {
+           admissionSignal.throwIfAborted();
+@@ -133,7 +136,9 @@ export async function withOpenClawStateDatabaseReadSnapshot<T>(
+           return captureOpenClawStateDatabaseReadAdmission(pathname);
+         },
+         shouldRetry: (error) =>
+-          error instanceof StateDatabaseAdmissionPendingError && error.databasePath === pathname,
++          (error instanceof StateDatabaseAdmissionPendingError &&
++            error.databasePath === pathname) ||
++          error instanceof GatewayLockNamespaceError,
+         deadlineMs: performance.now() + (options.admissionTimeoutMs ?? 0),
+         pollIntervalMs: 250,
+         sleep: (ms) => sleepWithAbort(ms, admissionSignal),
+diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
+index 8e84f7f0..894d3e4b 100644
+--- a/test/docker-entrypoint.test.ts
++++ b/test/docker-entrypoint.test.ts
+@@ -11,6 +11,7 @@ function fixture(command: CommandFixture) {
+     fs.copyFileSync(path.resolve(file), path.join(root, file));
+   }
+   fs.mkdirSync(path.join(root, "dist"));
++  fs.writeFileSync(path.join(root, "dist/build-info.json"), '{"buildId":"image-one"}');
+   const cli = String.raw`#!/usr/bin/env node
+ import fs from 'node:fs';
+ const args = process.argv.slice(2);
+@@ -58,6 +59,107 @@ if (args.includes('doctor')) {
+ }
+
+ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
++  it.for(["buildId", "railwayPatchDigest"])(
++    "repairs a changed %s once and admits routine boots through the original Gateway",
++    async (identityField, { command }) => {
++      const f = fixture(command);
++      const receipt = path.join(f.root, "activation.json");
++      const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect(f.read().map((row) => row.args)).toEqual([
++        ["doctor", "--fix", "--non-interactive"],
++        ["gateway"],
++        ["gateway"],
++      ]);
++      fs.writeFileSync(
++        path.join(f.root, "dist/build-info.json"),
++        JSON.stringify({ buildId: "image-one", [identityField]: "image-two" }),
++      );
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect(
++        f
++          .read()
++          .slice(-2)
++          .map((row) => row.args),
++      ).toEqual([["doctor", "--fix", "--non-interactive"], ["gateway"]]);
++    },
++  );
++
++  it("does not acknowledge a failed Doctor or share activation between profiles", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++    expect(
++      (await f.run(["openclaw.mjs", "gateway"], { ...environment, DOCTOR_EXIT: "78" })).status,
++    ).toBe(78);
++    expect(fs.existsSync(receipt)).toBe(false);
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    expect(
++      (await f.run(["openclaw.mjs", "--profile", "other", "gateway"], environment)).status,
++    ).toBe(0);
++    expect(
++      f
++        .read()
++        .slice(-2)
++        .map((row) => row.args),
++    ).toEqual([
++      ["--profile", "other", "doctor", "--fix", "--non-interactive"],
++      ["--profile", "other", "gateway"],
++    ]);
++  });
++
++  it("uses Gateway admission for changed state on an already activated image", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const environment = {
++      OPENCLAW_DOCKER_ACTIVATION_RECEIPT: path.join(f.root, "activation.json"),
++    };
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    fs.writeFileSync(path.join(f.root, "openclaw.json"), '{"changed":"state"}');
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    expect(
++      f
++        .read()
++        .slice(-1)
++        .map((row) => row.args),
++    ).toEqual([["gateway"]]);
++    expect(f.read().filter((row) => row.args.includes("doctor"))).toHaveLength(1);
++  });
++
++  it("reruns Doctor for a malformed receipt and rejects redirected receipts", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++    fs.writeFileSync(receipt, "incomplete", { mode: 0o600 });
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    const original = path.join(f.root, "original-activation.json");
++    fs.renameSync(receipt, original);
++    fs.symlinkSync(original, receipt);
++    const before = f.read();
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(1);
++    expect(f.read()).toEqual(before);
++  });
++
++  it("never stamps an interrupted Doctor", async ({ command }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    expect(
++      (
++        await f.run(["openclaw.mjs", "gateway"], {
++          OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt,
++          INTERRUPT_DOCTOR: "SIGTERM",
++        })
++      ).status,
++    ).toBe(143);
++    expect(fs.existsSync(receipt)).toBe(false);
++  });
++
+   it.for([
+     { args: ["openclaw.mjs", "gateway"], rootOptions: [] },
+     { args: ["openclaw", "gateway"], rootOptions: [], installed: true },
