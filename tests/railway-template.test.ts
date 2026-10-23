@@ -24,3 +24,7 @@ test("names both variables the template asks for", () => {
   assert.match(readme, /`OPENCLAW_MACHINE_DISPLAY_NAME`/);
   assert.match(readme, /`TS_AUTHKEY`/);
 });
+
+test("includes the dependency heading required by marketplace publication", () => {
+  assert.match(readme, /^### Deployment Dependencies$/m);
+});

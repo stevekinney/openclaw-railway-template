@@ -33,6 +33,8 @@ The health check uses `/startupz` with a 600-second window. On retained producti
 
 ## Dependencies for OpenClaw Private Gateway Hosting
 
+### Deployment Dependencies
+
 - A Railway account on a paid plan (a service with a volume).
 - A Tailscale tailnet with MagicDNS and HTTPS certificates enabled, and an auth key.
 - A model provider (for example Anthropic or OpenAI), added after deploy.
