@@ -549,7 +549,7 @@ index b3f00ad7..9dc44d29 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0..8f44be21 100644
+index 8e84f7f0..894d3e4b 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
 @@ -11,6 +11,7 @@ function fixture(command: CommandFixture) {
@@ -564,7 +564,7 @@ index 8e84f7f0..8f44be21 100644
  }
 
  describe.skipIf(process.platform === "win32")("Docker image activation", () => {
-+  it.each(["buildId", "railwayPatchDigest"])(
++  it.for(["buildId", "railwayPatchDigest"])(
 +    "repairs a changed %s once and admits routine boots through the original Gateway",
 +    async (identityField, { command }) => {
 +      const f = fixture(command);
