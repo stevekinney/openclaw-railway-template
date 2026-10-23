@@ -20,6 +20,7 @@
 # later, so ShellCheck cannot see where their variables are used.
 # shellcheck disable=SC2016,SC2034
 set -eu
+exec 3>&2
 
 cd "$(dirname "$0")/.."
 
@@ -118,7 +119,10 @@ wait_for_startup() {
     attempt=$((attempt + 1))
     sleep 2
   done
-  docker logs "$gateway" 2>&1 | tail -30
+  # check() hides command output; keep failed-start diagnostics on a separate
+  # descriptor so CI records the refusal before cleanup removes the container.
+  docker inspect --format '{{json .State}}' "$gateway" >&3
+  docker logs --tail 100 "$gateway" >&3 2>&3
   return 1
 }
 
