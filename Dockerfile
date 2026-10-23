@@ -34,16 +34,22 @@ RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/releas
     pnpm ui:build; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
-    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
+    node -e 'const fs = require("node:fs"); for (const plugin of fs.readdirSync("/tmp/release-extensions")) { const source = "/tmp/release-extensions/" + plugin + "/node_modules"; if (fs.existsSync(source)) fs.cpSync(source, "dist/extensions/" + plugin + "/node_modules", { recursive: true, verbatimSymlinks: true }); }'; \
+    node -e 'process.stdout.write(JSON.stringify(require("node:fs").readdirSync("dist", { recursive: true }).toSorted()))' > /tmp/openclaw-build-files.json
 
 # Extend the release with regenerated runtime bundles from the reviewed patch.
 # See documentation/UPGRADING.md before changing the release pin.
 FROM openclaw-release
 
+# Replace generated artifacts instead of overlaying obsolete release bundles.
+RUN rm -rf /app/dist
+
 # All runtime bundles and plugin assets come from the same patched source build.
 # The Control UI is rebuilt against the same runtime identity; production native
 # dependencies stay pinned above.
 COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
+COPY --from=openclaw-build --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
 COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
 RUN test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"
 

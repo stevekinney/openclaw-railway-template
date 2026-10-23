@@ -165,6 +165,19 @@ installed_tailscale="$(docker run --rm --entrypoint tailscale "$image" version |
 check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($pinned_tailscale)" \
   '[ -n "$pinned_tailscale" ] && [ "$pinned_tailscale" = "$installed_tailscale" ]'
 
+check "runtime contains exactly the rebuilt artifacts and production plugin links" \
+  'docker run --rm --entrypoint node "$image" -e '"'"'
+    const fs = require("node:fs");
+    const assert = require("node:assert/strict");
+    const expected = JSON.parse(fs.readFileSync("/app/openclaw-build-files.json", "utf8"));
+    const actual = fs.readdirSync("/app/dist", { recursive: true }).toSorted();
+    assert.deepEqual(actual, expected);
+    for (const file of actual) {
+      const pathname = "/app/dist/" + file;
+      if (fs.lstatSync(pathname).isSymbolicLink()) assert.ok(fs.existsSync(pathname), "broken production dependency: " + file);
+    }
+  '"'"''
+
 check "Control UI assets match the runtime build identity" \
   'docker run --rm --entrypoint node "$image" -e '"'"'
     const fs = require("node:fs");
