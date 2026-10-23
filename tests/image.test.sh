@@ -165,6 +165,17 @@ installed_tailscale="$(docker run --rm --entrypoint tailscale "$image" version |
 check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($pinned_tailscale)" \
   '[ -n "$pinned_tailscale" ] && [ "$pinned_tailscale" = "$installed_tailscale" ]'
 
+patch_digest="$(node -e 'process.stdout.write(require("node:crypto").hash("sha256", require("node:fs").readFileSync("scripts/openclaw-plugin-capture.patch")))')"
+check "activation metadata identifies the exact applied runtime patch" \
+  'docker run --rm --entrypoint node "$image" -e '"'"'
+    const information = require("/app/dist/build-info.json");
+    require("node:assert/strict").equal(information.railwayPatchDigest, process.argv[1]);
+  '"'"' "$patch_digest"'
+check "the image defaults disposable inspection snapshots to container storage" \
+  'docker run --rm --entrypoint node "$image" -e '"'"'
+    require("node:assert/strict").equal(process.env.XDG_CACHE_HOME, "/tmp");
+  '"'"''
+
 check "runtime contains exactly the rebuilt artifacts and production plugin links" \
   'docker run --rm --entrypoint node "$image" -e '"'"'
     const fs = require("node:fs");

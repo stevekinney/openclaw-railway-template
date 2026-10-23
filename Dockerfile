@@ -32,6 +32,7 @@ RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/releas
     selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
     pnpm ui:build; \
+    node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); fs.writeFileSync(file, JSON.stringify(information));'; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
@@ -68,6 +69,7 @@ USER root
 # OPENCLAW_SUPERVISOR_MODE=external tells OpenClaw that Railway owns the process
 # lifecycle, which refuses in-place self-updates and service installs.
 ENV OPENCLAW_HOME=/data \
+    XDG_CACHE_HOME=/tmp \
     OPENCLAW_DOCKER_ACTIVATION_RECEIPT=/data/.openclaw/railway-image-activation.json \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \

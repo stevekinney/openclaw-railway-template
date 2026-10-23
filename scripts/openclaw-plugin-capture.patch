@@ -549,7 +549,7 @@ index b3f00ad7..9dc44d29 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0..8295d302 100644
+index 8e84f7f0..8f44be21 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
 @@ -11,6 +11,7 @@ function fixture(command: CommandFixture) {
@@ -560,32 +560,36 @@ index 8e84f7f0..8295d302 100644
    const cli = String.raw`#!/usr/bin/env node
  import fs from 'node:fs';
  const args = process.argv.slice(2);
-@@ -58,6 +59,103 @@ if (args.includes('doctor')) {
+@@ -58,6 +59,107 @@ if (args.includes('doctor')) {
  }
 
  describe.skipIf(process.platform === "win32")("Docker image activation", () => {
-+  it("repairs each image once and admits routine boots through the original Gateway", async ({
-+    command,
-+  }) => {
-+    const f = fixture(command);
-+    const receipt = path.join(f.root, "activation.json");
-+    const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
-+    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
-+    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
-+    expect(f.read().map((row) => row.args)).toEqual([
-+      ["doctor", "--fix", "--non-interactive"],
-+      ["gateway"],
-+      ["gateway"],
-+    ]);
-+    fs.writeFileSync(path.join(f.root, "dist/build-info.json"), '{"buildId":"image-two"}');
-+    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
-+    expect(
-+      f
-+        .read()
-+        .slice(-2)
-+        .map((row) => row.args),
-+    ).toEqual([["doctor", "--fix", "--non-interactive"], ["gateway"]]);
-+  });
++  it.each(["buildId", "railwayPatchDigest"])(
++    "repairs a changed %s once and admits routine boots through the original Gateway",
++    async (identityField, { command }) => {
++      const f = fixture(command);
++      const receipt = path.join(f.root, "activation.json");
++      const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect(f.read().map((row) => row.args)).toEqual([
++        ["doctor", "--fix", "--non-interactive"],
++        ["gateway"],
++        ["gateway"],
++      ]);
++      fs.writeFileSync(
++        path.join(f.root, "dist/build-info.json"),
++        JSON.stringify({ buildId: "image-one", [identityField]: "image-two" }),
++      );
++      expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++      expect(
++        f
++          .read()
++          .slice(-2)
++          .map((row) => row.args),
++      ).toEqual([["doctor", "--fix", "--non-interactive"], ["gateway"]]);
++    },
++  );
 +
 +  it("does not acknowledge a failed Doctor or share activation between profiles", async ({
 +    command,
