@@ -330,6 +330,311 @@ index 4eb7b7cf..8f450c45 100644
  it.each([
    { change: "link", phase: "during" },
    { change: "unlink", phase: "after" },
+diff --git a/src/infra/update-database-backup.ts b/src/infra/update-database-backup.ts
+index 16e3e9bb..a70d8764 100644
+--- a/src/infra/update-database-backup.ts
++++ b/src/infra/update-database-backup.ts
+@@ -38,7 +38,7 @@ import {
+   readUpdateStateDatabaseSizes,
+   readUpdateStateDatabaseSizesInProcess,
+ } from "./update-candidate-state.sizes.js";
+-import { readUpdateDatabaseGenerations } from "./update-database-generations.js";
++import { createUpdateDatabaseGenerationReader } from "./update-database-generations.js";
+ import type { UpdateRecoveryCaptureAcquisition } from "./update-recovery-capture-acquisition.js";
+
+ const UpdateDatabaseBackupSchema = z.object({
+@@ -271,9 +271,10 @@ export async function createUpdateDatabaseBackupInProcess(
+   const sourceGenerations: UpdateDatabaseBackup["sourceGenerations"] = Object.fromEntries(
+     inventory.missing.map((file) => [file, null]),
+   );
++  const readGenerationForOperation = createUpdateDatabaseGenerationReader();
+   const readGeneration = (file: string) => {
+     try {
+-      return readUpdateDatabaseGenerations([file])[file] ?? undefined;
++      return readGenerationForOperation([file])[file] ?? undefined;
+     } catch (error) {
+       warnings.push(
+         `Database write generation unavailable for ${file}: ${formatErrorMessageWithCode(error)}`,
+diff --git a/src/infra/update-database-generations.test.ts b/src/infra/update-database-generations.test.ts
+index b31ea20a..3d316a1a 100644
+--- a/src/infra/update-database-generations.test.ts
++++ b/src/infra/update-database-generations.test.ts
+@@ -7,7 +7,10 @@ import {
+   readStableSqliteFileGeneration,
+   sameSqliteFileGeneration,
+ } from "./sqlite-file-generation.js";
+-import { readUpdateDatabaseGenerations } from "./update-database-generations.js";
++import {
++  createUpdateDatabaseGenerationReader,
++  readUpdateDatabaseGenerations,
++} from "./update-database-generations.js";
+
+ const dirs = useAutoCleanupTempDirTracker(afterEach);
+ afterEach(() => vi.restoreAllMocks());
+@@ -76,3 +79,145 @@ it("captures opened file identity when Windows pathname stats report unknown IDs
+     ino: expected.ino,
+   });
+ });
++
++it("reuses only the committed-content acquisition within one generation operation", () => {
++  const file = path.join(dirs.make("update-generation-cache-"), "state.sqlite");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++
++  const reader = createUpdateDatabaseGenerationReader();
++  const uncached = readUpdateDatabaseGenerations([file]);
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  const first = reader([file]);
++  const firstAllocations = allocations.mock.calls.length;
++  const second = reader([file]);
++
++  expect(first).toEqual(uncached);
++  expect(second).toEqual(uncached);
++  expect(firstAllocations).toBeGreaterThan(0);
++  expect(allocations.mock.calls.length).toBe(firstAllocations);
++});
++
++it("misses the committed-content cache when source metadata changes", () => {
++  const file = path.join(dirs.make("update-generation-cache-metadata-"), "state.sqlite");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++
++  const reader = createUpdateDatabaseGenerationReader();
++  const first = reader([file]);
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  using writer = new DatabaseSync(file);
++  writer.exec("INSERT INTO receipt VALUES ('changed');");
++  const second = reader([file]);
++
++  expect(second).not.toEqual(first);
++  expect(allocations.mock.calls.length).toBeGreaterThan(0);
++});
++
++it("misses the cache when identical bytes replace the source inode", () => {
++  const directory = dirs.make("update-generation-cache-replacement-");
++  const file = path.join(directory, "state.sqlite");
++  const replacement = path.join(directory, "state.sqlite.replacement");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++
++  const reader = createUpdateDatabaseGenerationReader();
++  const first = reader([file]);
++  fs.copyFileSync(file, replacement);
++  fs.renameSync(replacement, file);
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  const second = reader([file]);
++
++  expect(second).not.toEqual(first);
++  expect(allocations.mock.calls.length).toBeGreaterThan(0);
++});
++
++it("does not seed the cache when a post-digest check fails", () => {
++  const file = path.join(dirs.make("update-generation-cache-postcheck-"), "state.sqlite");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++
++  const reader = createUpdateDatabaseGenerationReader();
++  const originalOpenSync = fs.openSync;
++  let sharedMemoryAttempts = 0;
++  vi.spyOn(fs, "openSync").mockImplementation((...args) => {
++    if (String(args[0]) === `${file}-shm` && ++sharedMemoryAttempts === 2) {
++      throw new Error("post-digest check failure");
++    }
++    return originalOpenSync(...args);
++  });
++
++  expect(() => reader([file])).toThrow("post-digest check failure");
++  vi.mocked(fs.openSync).mockRestore();
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  reader([file]);
++
++  expect(allocations.mock.calls.length).toBeGreaterThan(0);
++});
++
++it("keeps stable-generation and WAL-header checks on a cache hit", () => {
++  const file = path.join(dirs.make("update-generation-cache-observe-"), "state.sqlite");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++
++  const stableReads: number[] = [];
++  const headerReads: number[] = [];
++  const reader = createUpdateDatabaseGenerationReader({
++    onStableGenerationRead: () => stableReads.push(1),
++    onWalHeaderRead: () => headerReads.push(1),
++  });
++  reader([file]);
++  stableReads.length = 0;
++  headerReads.length = 0;
++  reader([file]);
++
++  expect(stableReads).toHaveLength(2);
++  expect(headerReads).toHaveLength(2);
++});
++
++it("misses the cache when the exact WAL header changes", () => {
++  const file = path.join(dirs.make("update-generation-cache-wal-"), "state.sqlite");
++  const database = new DatabaseSync(file);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++  const sharedMemory = Buffer.alloc(96);
++  sharedMemory.copy(sharedMemory, 48);
++  fs.writeFileSync(`${file}-shm`, sharedMemory);
++
++  const reader = createUpdateDatabaseGenerationReader();
++  reader([file]);
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  sharedMemory[8] = 1;
++  sharedMemory.copy(sharedMemory, 48);
++  fs.writeFileSync(`${file}-shm`, sharedMemory);
++  reader([file]);
++
++  expect(allocations.mock.calls.length).toBeGreaterThan(0);
++});
++
++it("retains earlier cache facts while failed batch paths stay uncached", () => {
++  const directory = dirs.make("update-generation-cache-batch-");
++  const good = path.join(directory, "good.sqlite");
++  const bad = path.join(directory, "bad.sqlite");
++  const missing = path.join(directory, "missing.sqlite");
++  const database = new DatabaseSync(good);
++  database.exec("CREATE TABLE receipt(value TEXT); INSERT INTO receipt VALUES ('retained');");
++  database.close();
++  fs.writeFileSync(bad, Buffer.from("not sqlite"));
++  fs.writeFileSync(`${missing}-journal`, Buffer.from("retained journal"));
++
++  const reader = createUpdateDatabaseGenerationReader();
++  expect(() => reader([good, bad])).toThrow();
++  const expectedGood = readUpdateDatabaseGenerations([good]);
++  const allocations = vi.spyOn(fs, "mkdtempSync");
++  expect(reader([good])).toEqual(expectedGood);
++  expect(allocations.mock.calls.length).toBe(0);
++  expect(() => reader([bad])).toThrow();
++  expect(allocations.mock.calls.length).toBeGreaterThan(0);
++  expect(() => reader([missing])).toThrow(/retained journal data/u);
++});
+diff --git a/src/infra/update-database-generations.ts b/src/infra/update-database-generations.ts
+index a35de99f..0fbad1d1 100644
+--- a/src/infra/update-database-generations.ts
++++ b/src/infra/update-database-generations.ts
+@@ -5,6 +5,7 @@ import { openNodeSqliteDatabase } from "./node-sqlite.js";
+ import { hasNodeErrorCode } from "./path-guards.js";
+ import {
+   readStableSqliteFileGeneration,
++  serializeSqliteFileGeneration,
+   sameSqliteFileGeneration,
+ } from "./sqlite-file-generation.js";
+ import { runWithSqliteCleanup } from "./sqlite-lifecycle-errors.js";
+@@ -39,6 +40,31 @@ function readCommittedContent(pathname: string): string {
+   });
+ }
+
++type CommittedContentDigestCache = Map<string, string>;
++type GenerationReaderObservers = {
++  onStableGenerationRead?: () => void;
++  onWalHeaderRead?: () => void;
++};
++
++function committedContentCacheKey(
++  pathname: string,
++  generation: ReturnType<typeof readStableSqliteFileGeneration>,
++  walHeader: Buffer | null,
++): string {
++  return JSON.stringify([
++    pathname,
++    serializeSqliteFileGeneration(generation),
++    walHeader?.toString("hex") ?? null,
++  ]);
++}
++
++/** Create a reader whose cache is scoped to one database-generation operation. */
++export function createUpdateDatabaseGenerationReader(observers?: GenerationReaderObservers) {
++  const committedContent = new Map<string, string>();
++  return (paths: readonly string[]): UpdateDatabaseGenerations =>
++    readUpdateDatabaseGenerationsWithCache(paths, committedContent, observers);
++}
++
+ function readWalIndexHeader(pathname: string): Buffer | null {
+   const file = `${pathname}-shm`;
+   let descriptor: number;
+@@ -79,6 +105,14 @@ function readWalIndexHeader(pathname: string): Buffer | null {
+  * schema-maintenance owner before live reads are admitted: raw close
+  * can release this process's SQLite locks. Inspect only the supplied inventory. */
+ export function readUpdateDatabaseGenerations(paths: readonly string[]): UpdateDatabaseGenerations {
++  return readUpdateDatabaseGenerationsWithCache(paths);
++}
++
++function readUpdateDatabaseGenerationsWithCache(
++  paths: readonly string[],
++  committedContent?: CommittedContentDigestCache,
++  observers?: GenerationReaderObservers,
++): UpdateDatabaseGenerations {
+   return Object.fromEntries(
+     paths.map((pathname) => {
+       const entry = fs.lstatSync(pathname, { bigint: true, throwIfNoEntry: false });
+@@ -95,17 +129,47 @@ export function readUpdateDatabaseGenerations(paths: readonly string[]): UpdateD
+       if (!entry.isFile()) {
+         throw new Error(`Database generation requires a regular file: ${pathname}`);
+       }
+-      const before = readWalIndexHeader(pathname);
+-      const generation = readStableSqliteFileGeneration(pathname);
+-      const content = readCommittedContent(pathname);
+-      const current = readStableSqliteFileGeneration(pathname);
+-      const after = readWalIndexHeader(pathname);
+-      if (
+-        !sameSqliteFileGeneration(generation, current) ||
+-        (before === null ? after !== null : !after?.equals(before)) ||
+-        (generation.wal && generation.wal.size > 0n && after?.[12] !== 1)
+-      ) {
+-        throw new Error(`SQLite WAL commit publication could not be verified: ${pathname}`);
++      const cache = committedContent;
++      const readHeader = () => {
++        observers?.onWalHeaderRead?.();
++        return readWalIndexHeader(pathname);
++      };
++      const readGeneration = () => {
++        observers?.onStableGenerationRead?.();
++        return readStableSqliteFileGeneration(pathname);
++      };
++      const before = readHeader();
++      const generation = readGeneration();
++      const initialCacheKey = cache
++        ? committedContentCacheKey(pathname, generation, before)
++        : undefined;
++      const cached = initialCacheKey === undefined ? undefined : cache?.get(initialCacheKey);
++      let content = cached ?? readCommittedContent(pathname);
++      let current = readGeneration();
++      let after = readHeader();
++      const assertPostchecks = () => {
++        if (
++          !sameSqliteFileGeneration(generation, current) ||
++          (before === null ? after !== null : !after?.equals(before)) ||
++          (generation.wal && generation.wal.size > 0n && after?.[12] !== 1)
++        ) {
++          throw new Error(`SQLite WAL commit publication could not be verified: ${pathname}`);
++        }
++      };
++      assertPostchecks();
++      let cacheKey = cache ? committedContentCacheKey(pathname, current, after) : undefined;
++      if (cached !== undefined && cacheKey !== initialCacheKey) {
++        // Exact generation/header identity is part of the cache identity. A
++        // normalized empty-WAL comparison may pass while its serialized key changes.
++        const refreshed = readCommittedContent(pathname);
++        current = readGeneration();
++        after = readHeader();
++        assertPostchecks();
++        content = refreshed;
++        cacheKey = committedContentCacheKey(pathname, current, after);
++      }
++      if (cacheKey !== undefined && cached === undefined) {
++        cache?.set(cacheKey, content);
+       }
+       // Checkpoints preserve iChange and the last committed frame checksum,
+       // including TRUNCATE, which resets frame count and salts. Rebuilding the
 diff --git a/src/infra/update-recovery-baseline-capture.ts b/src/infra/update-recovery-baseline-capture.ts
 index 36cfe324..f62c328d 100644
 --- a/src/infra/update-recovery-baseline-capture.ts
