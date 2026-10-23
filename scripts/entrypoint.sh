@@ -61,7 +61,19 @@ install -d -o node -g node -m 755 "$(dirname "$TS_SOCKET")"
 chown node:node "$OPENCLAW_HOME"
 # A root shell (for example `railway ssh` without the wrappers) can leave
 # root-owned files behind, which locks the Gateway and its tools out of them.
-find "$state_directory" "$HOME" "$TS_STATE_DIR" -xdev ! -user node -exec chown -h node:node {} +
+# Walk independent roots concurrently; admit no state until every repair finishes.
+ownership_process_identifiers=""
+for ownership_directory in "$state_directory" "$HOME" "$TS_STATE_DIR"; do
+  find "$ownership_directory" -xdev ! -user node -exec chown -h node:node {} + &
+  ownership_process_identifiers="$ownership_process_identifiers $!"
+done
+ownership_failed=0
+for ownership_process_identifier in $ownership_process_identifiers; do
+  if ! wait "$ownership_process_identifier"; then
+    ownership_failed=1
+  fi
+done
+[ "$ownership_failed" = 0 ] || fail "volume ownership repair failed; configuration and Gateway startup were not admitted"
 
 if [ ! -e "$config_file" ] && [ ! -L "$config_file" ]; then
   install -o node -g node -m 600 /etc/openclaw-railway/openclaw.seed.json "$config_file"
