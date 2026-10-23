@@ -2,6 +2,7 @@
 // the template depends on. This runs offline; it does not replace
 // `railway config plan` against a real project.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { createRailwayContext, project } from "railway/iac";
 
@@ -83,4 +84,15 @@ test("no service is exposed publicly", () => {
 test("secrets come from Railway and are never written in the file", () => {
   assert.deepEqual(findService("openclaw").variables?.OPENCLAW_GATEWAY_TOKEN, { type: "preserve" });
   assert.deepEqual(findService("openclaw").variables?.TS_AUTHKEY, { type: "preserve" });
+});
+
+// Railway's builder accepts cache mounts only; ordinary Docker also accepts bind mounts.
+test("Docker build mounts use Railway-supported cache mounts", async () => {
+  const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+  const instructions = dockerfile.replace(/\\\r?\n/g, " ");
+  for (const [, instruction] of instructions.matchAll(/^RUN\s+(.+)$/gm)) {
+    for (const [, mount] of instruction.matchAll(/(?:^|\s)--mount=([^\s]+)/g)) {
+      assert.ok(mount.split(",").includes("type=cache"), `Railway does not support build mount ${mount}`);
+    }
+  }
 });
