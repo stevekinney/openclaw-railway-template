@@ -297,8 +297,9 @@ reported `gateway.probe_failed` on every 2026.9.8 install
 | Loopback-only Gateway | `railway ssh --service openclaw -- openclaw config get gateway.bind` | `loopback` |
 | Desktop | `openclaw-mac status --json` | primary `connected` |
 | Telegram | DM the bot | agent reply |
-| Persistence | `railway restart --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval |
-| Tailscale persistence | After the restart, `railway logs --service openclaw` | `serve enabled` again, no new `logged in to Tailscale`; same machine and IP |
+| Same-image activation | `railway restart --service openclaw --yes`, then inspect the startup logs | unchanged activation, Gateway state admission, no second Doctor |
+| Persistence across container replacement | `railway redeploy --service openclaw --yes`, then repeat the Desktop check | still paired, no re-approval; a rebuilt image may require Doctor activation |
+| Tailscale persistence | After the redeploy, `railway logs --service openclaw` | `serve enabled` again, no new `logged in to Tailscale`; same machine and IP |
 
 ## Keeping variables in sync
 

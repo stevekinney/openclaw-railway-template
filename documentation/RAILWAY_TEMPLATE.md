@@ -4,7 +4,7 @@ OpenClaw Private Gateway runs your own [OpenClaw](https://openclaw.ai) Gateway o
 
 ## About Hosting OpenClaw Private Gateway
 
-This template starts one service with one volume. The **openclaw** service extends a pinned official OpenClaw release with a tested startup performance patch with Tailscale inside the same container:
+This template starts one service with one volume. The **openclaw** service extends a pinned official OpenClaw release with a tested startup performance patch. Tailscale runs inside the same container:
 
 - The Gateway listens only on localhost. OpenClaw itself runs Tailscale Serve, so it appears in your tailnet under the name you give it: `Work Gateway` becomes `https://work-gateway.your-tailnet.ts.net`, and pairing codes and the dashboard origin follow automatically.
 - On your tailnet, the dashboard signs you in with your Tailscale identity. Token authentication still protects everything else, and each device that runs the macOS app or a node is approved by hand.

@@ -444,6 +444,17 @@ check "crash recovery admits state without repeating Doctor" \
 check "crash recovery preserves the activation receipt" \
   '[ "$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)" = "$activation_receipt" ]'
 
+log "state survives container replacement"
+docker rm -f "$gateway" >/dev/null
+start_gateway
+check "a replacement container admits the existing volume" 'wait_for_startup'
+check "container replacement reuses activation without repeating Doctor" \
+  '! docker logs "$gateway" 2>&1 | grep -q "OpenClaw image activation: Doctor completed successfully" && [ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation unchanged: continuing to Gateway state admission")" = 1 ]'
+check "container replacement preserves the activation receipt" \
+  '[ "$(docker exec "$gateway" cat /data/.openclaw/railway-image-activation.json)" = "$activation_receipt" ]'
+check "container replacement preserves configuration and HOME files" \
+  '[ "$(gateway_cli config get gateway.controlUi.communityInvite)" = false ] && [ "$(docker exec "$gateway" cat /data/home/persist-check)" = kept ]'
+
 # The sidecar under tini, as in the real container, with tailscaled logged out.
 docker run -d --name "$watchdog" --user node -e TS_STATE_DIR=/tmp/tailscale -e TS_SOCKET=/tmp/tailscaled.sock \
   -e OPENCLAW_GATEWAY_PORT=18789 --entrypoint tini "$image" -s -- node /usr/local/lib/openclaw-railway/sidecar.mjs >/dev/null
