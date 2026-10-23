@@ -11,7 +11,17 @@ An upgrade must update the runtime image and source revision together, revalidat
 **Merging to `main` deploys.** Railway builds and deploys every push to the
 branch it watches. Treat the merge of an upgrade PR as the deploy step below.
 
-## 1. Review the release
+## Slack routing companion
+
+Every image build also applies the complete Slack routing companion from `stevekinney/openclaw-plugin-slack-workspace`. `Dockerfile` pins an immutable Git commit and the patch’s SHA-256 checksum. The build verifies the upstream source commit and version against the selected release image, checks and applies both patches, runs the routing regressions and complete Slack suite, and rebuilds the selected bundled channels. Slack is selected explicitly because the upstream release excludes it. Its production dependencies use OpenClaw’s package-lock generator, which validates versions and integrity against the source pnpm lockfile, followed by `npm ci`. The image retains that production lockfile beside the Slack channel. A conflicting or incomplete upgrade fails before deployment. Never remove a gate or the routing patch to make an upgrade build pass.
+
+The final image records `slackRoutingPatchDigest` and `slackRoutingContractVersion` in `/app/dist/build-info.json`. Its runtime check loads an isolated probe through the real OpenClaw plugin loader, registers the routing hook and interactive handler, and requires a registration receipt. The probe also loads the actual bundled Slack channel and checks its source path and version against the host. Missing, shadowed, or mismatched bundles reject the image. The probe blocks network access and uses disposable state. Image tests repeat the check and compare the image’s digest with the Dockerfile pin.
+
+Select the image’s matched Slack channel once with `openclaw plugins install slack` after deploying this companion image. The supported bundled installer persists `/app/dist/extensions/slack` as both source and install path. That stable path resolves to each new image’s rebuilt channel, so an older separately installed archive cannot shadow it. Preserve the Slack account settings and the `slack-workspace` routing configuration. Verify the selected source with `openclaw plugins info slack --runtime --json`; it must identify the image’s bundled path and current release version.
+
+When upgrading OpenClaw, update the release image, source commit/archive checksum, and builder/runtime Node pins together as required by that release. Rebase the companion patch in the plugin repository, run its tests against the new source, commit and push it, then update the immutable patch URL and checksum here. Keep the image’s full test suite green before merging. A version upgrade is not complete until retained-state startup, both Slack connections, exact-session thread replies, Block Kit inputs, and archived-session fallback pass. Routing must stay enabled throughout these checks; disabling it does not satisfy the upgrade gate.
+
+## Review the release
 
 - Release notes: <https://github.com/openclaw/openclaw/releases>. The npm
   package carries the same `CHANGELOG.md` and the docs for that exact version:
@@ -21,7 +31,7 @@ branch it watches. Treat the merge of an upgrade PR as the deploy step below.
 - Pick stable releases (`latest`). Avoid `-beta` tags. OpenClaw also publishes
   an `extended-stable` line if you prefer a slower cadence.
 
-## 2. Update the pin
+## Update the pins
 
 Dependabot opens a PR for new image tags weekly (`.github/dependabot.yml`), and
 updates tag and digest together. To do it by hand:
@@ -34,7 +44,7 @@ docker buildx imagetools inspect "ghcr.io/openclaw/openclaw:$version" --format '
 
 Update the source revision and archive checksum in the build stage at the same time, then verify the capture patch against the new source. The Tailscale binaries have their own `FROM … AS tailscale` line; see [Tailscale upgrades](#tailscale-upgrades).
 
-## 3–4. Build and validate
+## Build and validate
 
 CI (`.github/workflows/ci.yml`) builds the image and runs `tests/image.test.sh`
 against it on every PR. Among other things, it checks that `openclaw --version`
@@ -49,7 +59,7 @@ Don't merge on red.
 To test an upgrade against a copy of real state, restore an OpenClaw backup
 archive (step 5) into a local Docker volume and start the new image on it.
 
-## 5. Back up
+## Back up
 
 Two complementary backups; take both before merging an upgrade.
 
@@ -71,7 +81,7 @@ can't write. Archives contain credentials; store them like secrets. Verified
 locally while the Gateway was running; SQLite files belonging to the bundled
 Codex runtime are archived as raw bytes with a warning.
 
-## 6. Deploy
+## Deploy
 
 Merge the PR. On first activation of the new build, OpenClaw's entrypoint runs `openclaw doctor --fix`
 under exclusive state ownership before the Gateway starts, which applies config
@@ -91,7 +101,7 @@ If Doctor can't migrate safely, the container exits with code **78** and Railway
 keeps restarting it. Don't delete state or lock files; see
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#exit-code-78).
 
-## 7–9. Verify
+## Verify
 
 ```bash
 railway ssh --service openclaw -- openclaw --version     # the new version

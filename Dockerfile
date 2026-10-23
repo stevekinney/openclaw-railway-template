@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
+FROM node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS runtime-node
+
 # Tailscale runs inside this container, next to the Gateway; only its two
 # binaries are taken from the official image. Dependabot tracks this pin.
 FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
@@ -12,36 +14,48 @@ FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS bun
 FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS openclaw-build
 WORKDIR /app
+ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
+    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+    OPENCLAW_PREFER_PNPM=1 \
+    OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=4352
 ADD --checksum=sha256:3f3f54c80914d8de5f5370ec417cece495d9dd9a2d329b36b63764bafa80d2c7 https://codeload.github.com/openclaw/openclaw/tar.gz/1b58cb9a1b4f4353e1add63c8506db4d890962e8 /tmp/openclaw-source.tar.gz
 RUN tar -xzf /tmp/openclaw-source.tar.gz --strip-components=1 -C /app \
  && rm /tmp/openclaw-source.tar.gz \
  && corepack enable
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
-RUN pnpm install --frozen-lockfile
+COPY --from=openclaw-release /app/dist/build-info.json /tmp/release-build-info.json
+COPY scripts/check-slack-routing.ts /tmp/check-slack-routing.ts
+RUN node /tmp/check-slack-routing.ts identity /app /tmp/release-build-info.json \
+ && pnpm install --frozen-lockfile
 COPY scripts/openclaw-plugin-capture.patch /tmp/openclaw-plugin-capture.patch
+ADD --checksum=sha256:1d572eb84e2a12c88c23848a97238bb18ad4a131f395aff9b3f57b3e3a42cb3f https://raw.githubusercontent.com/stevekinney/openclaw-plugin-slack-workspace/ee274d16a87536b97770260fa17f08ee7e80af68/docs/openclaw-routing.patch /tmp/openclaw-slack-routing.patch
 RUN git apply --check /tmp/openclaw-plugin-capture.patch \
  && git apply /tmp/openclaw-plugin-capture.patch \
+ && git apply --check /tmp/openclaw-slack-routing.patch \
+ && git apply /tmp/openclaw-slack-routing.patch \
  && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));'
-RUN pnpm test src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1
-ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
-    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
-    OPENCLAW_PREFER_PNPM=1 \
-    OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=4352
+RUN pnpm test src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
+ && node scripts/run-vitest.mjs src/plugins/hooks.resolve-inbound-route.test.ts src/channels/session.test.ts src/infra/outbound/session-context.test.ts src/infra/system-events.test.ts --maxWorkers=1 \
+ && node scripts/run-vitest.mjs --config test/vitest/vitest.extension-slack.config.ts --maxWorkers=1
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
 RUN set -eu; \
-    selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack"])].join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
+    node --import ./scripts/tsx.mjs --input-type=module -e 'import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { generateNpmPackageLock, packageJsonForNpmLock, readNpmLockOverrides } from "./scripts/generate-npm-package-lock.mts"; import { resolveNpmRunner } from "./scripts/npm-runner.mts"; const directory = "/tmp/slack-production-dependencies"; fs.mkdirSync(directory); const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync("extensions/slack/package.json", "utf8")); const manifest = { name, version, dependencies, optionalDependencies }; fs.writeFileSync(directory + "/package.json", JSON.stringify(packageJsonForNpmLock(manifest, readNpmLockOverrides(manifest, directory)))); fs.writeFileSync(directory + "/package-lock.json", generateNpmPackageLock(directory, { installStrategy: "shallow" })); const runner = resolveNpmRunner({ npmArgs: ["ci", "--install-strategy=shallow", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-fund", "--workspaces=false"] }); execFileSync(runner.command, runner.args, { cwd: directory, stdio: "inherit" });'; \
     pnpm ui:build; \
-    node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); fs.writeFileSync(file, JSON.stringify(information));'; \
+    node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); information.slackRoutingPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-slack-routing.patch")); information.slackRoutingContractVersion = 1; fs.writeFileSync(file, JSON.stringify(information));'; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
     node -e 'const fs = require("node:fs"); for (const plugin of fs.readdirSync("/tmp/release-extensions")) { const source = "/tmp/release-extensions/" + plugin + "/node_modules"; if (fs.existsSync(source)) fs.cpSync(source, "dist/extensions/" + plugin + "/node_modules", { recursive: true, verbatimSymlinks: true }); }'; \
+    cp -a /tmp/slack-production-dependencies/node_modules dist/extensions/slack/node_modules; \
+    cp /tmp/slack-production-dependencies/package-lock.json dist/extensions/slack/package-lock.json; \
     node -e 'process.stdout.write(JSON.stringify(require("node:fs").readdirSync("dist", { recursive: true }).toSorted()))' > /tmp/openclaw-build-files.json
 
 # Extend the release with regenerated runtime bundles from the reviewed patch.
 # See documentation/UPGRADING.md before changing the release pin.
 FROM openclaw-release
+COPY --from=runtime-node /usr/local/bin/node /usr/local/bin/node
 
 # Replace generated artifacts instead of overlaying obsolete release bundles.
 RUN rm -rf /app/dist
@@ -52,7 +66,10 @@ RUN rm -rf /app/dist
 COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
 COPY --from=openclaw-build --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
 COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
-RUN test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"
+COPY --from=openclaw-build --chmod=0644 /tmp/openclaw-slack-routing.patch /etc/openclaw-slack-routing.patch
+COPY scripts/check-slack-routing.ts /usr/local/lib/openclaw-railway/check-slack-routing.ts
+RUN node /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-slack-routing.patch \
+ && test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"
 
 # Railway mounts volumes owned by root, so the container starts as root only
 # long enough for scripts/entrypoint.sh to prepare /data. The entrypoint then
