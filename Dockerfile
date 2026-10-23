@@ -22,14 +22,16 @@ COPY scripts/openclaw-plugin-capture.patch /tmp/openclaw-plugin-capture.patch
 RUN git apply --check /tmp/openclaw-plugin-capture.patch \
  && git apply /tmp/openclaw-plugin-capture.patch \
  && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));'
-RUN pnpm test src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts --maxWorkers=1
+RUN pnpm test src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1
 ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
     OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+    OPENCLAW_PREFER_PNPM=1 \
     OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=4352
 RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/release-extensions \
     set -eu; \
     selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
+    pnpm ui:build; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
     find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
@@ -39,7 +41,8 @@ RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/releas
 FROM openclaw-release
 
 # All runtime bundles and plugin assets come from the same patched source build.
-# Unchanged Control UI assets and production native dependencies stay pinned above.
+# The Control UI is rebuilt against the same runtime identity; production native
+# dependencies stay pinned above.
 COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
 COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
 RUN test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"

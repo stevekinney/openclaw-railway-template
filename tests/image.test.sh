@@ -62,7 +62,7 @@ trap cleanup EXIT INT TERM
 # The Gateway without Tailscale: loopback-only, reachable only from inside.
 start_gateway() {
   docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 \
+    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_DEBUG=1 \
     -e OPENCLAW_RAILWAY_WEBHOOKS=on -e OPENCLAW_HOOKS_TOKEN="$hooks_token" \
     "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
 }
@@ -116,6 +116,7 @@ wait_for_startup() {
   attempt=0
   while [ "$attempt" -lt 60 ]; do
     [ "$(remote_status /startupz 2>/dev/null || true)" = 200 ] && return 0
+    [ "$(docker inspect -f "{{.State.Running}}" "$gateway")" = true ] || break
     attempt=$((attempt + 1))
     sleep 2
   done
@@ -163,6 +164,15 @@ pinned_tailscale="$(sed -n 's|^FROM tailscale/tailscale:v\([^@]*\)@sha256:.* AS 
 installed_tailscale="$(docker run --rm --entrypoint tailscale "$image" version | head -1)"
 check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($pinned_tailscale)" \
   '[ -n "$pinned_tailscale" ] && [ "$pinned_tailscale" = "$installed_tailscale" ]'
+
+check "Control UI assets match the runtime build identity" \
+  'docker run --rm --entrypoint node "$image" -e '"'"'
+    const fs = require("node:fs");
+    const runtime = JSON.parse(fs.readFileSync("/app/dist/build-info.json", "utf8"));
+    const html = fs.readFileSync("/app/dist/control-ui/index.html", "utf8");
+    const identity = html.match(/data-openclaw-control-ui-build-id="([a-zA-Z0-9._-]+)-[a-f0-9]{64}"/u)?.[1];
+    if (!identity || identity !== runtime.buildId) throw new Error("Control UI build identity differs from runtime");
+  '"'"''
 
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
