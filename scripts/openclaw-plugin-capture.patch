@@ -415,7 +415,7 @@ index 6da58805..e06621f0 100644
    let directory: string;
    try {
 diff --git a/src/plugins/plugin-source-capture-directory.test.ts b/src/plugins/plugin-source-capture-directory.test.ts
-index 96fac6ca..8f406264 100644
+index 96fac6ca..b2988bc5 100644
 --- a/src/plugins/plugin-source-capture-directory.test.ts
 +++ b/src/plugins/plugin-source-capture-directory.test.ts
 @@ -1,6 +1,7 @@
@@ -532,13 +532,13 @@ index 96fac6ca..8f406264 100644
        },
        stdio: ["pipe", "pipe", "pipe"],
        timeout: 15_000,
-@@ -387,11 +403,10 @@ it("metadata boot preserves recent captures and legacy files with another produc
+@@ -387,11 +403,9 @@ it("metadata boot preserves recent captures and legacy files with another produc
    const old = await abandonCapture(stateDir, source);
    const recent = await abandonCapture(stateDir, source);
    age(old.instanceRoot);
 -  const legacy = path.join(temp.make("plugin-capture-legacy-"), "openclaw-plugin-build-legacy");
-+  const legacy = path.join(tmpdir(), "openclaw-plugin-build-legacy");
-   fs.mkdirSync(legacy);
+-  fs.mkdirSync(legacy);
++  const legacy = temp.make("openclaw-plugin-build-legacy-");
    fs.writeFileSync(path.join(legacy, "sentinel"), "legacy files have no custody token");
    age(legacy);
 -  vi.stubEnv("TMPDIR", path.dirname(legacy));
