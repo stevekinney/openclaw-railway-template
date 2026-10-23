@@ -180,7 +180,7 @@ check "the image identifies the exact pinned Slack routing patch" \
     assert.equal(information.slackRoutingPatchDigest, process.argv[1]);
   '"'"' "$routing_patch_digest"'
 check "the real host registers a plugin against the Slack routing contract" \
-  'docker run --rm --entrypoint node "$image" /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-railway/openclaw-slack-routing.patch'
+  'docker run --rm --entrypoint node "$image" /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-slack-routing.patch'
 check "the image defaults disposable inspection snapshots to container storage" \
   'docker run --rm --entrypoint node "$image" -e '"'"'
     require("node:assert/strict").equal(process.env.XDG_CACHE_HOME, "/tmp");

@@ -66,9 +66,9 @@ RUN rm -rf /app/dist
 COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
 COPY --from=openclaw-build --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
 COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
-COPY --from=openclaw-build --chmod=0644 /tmp/openclaw-slack-routing.patch /etc/openclaw-railway/openclaw-slack-routing.patch
+COPY --from=openclaw-build --chmod=0644 /tmp/openclaw-slack-routing.patch /etc/openclaw-slack-routing.patch
 COPY scripts/check-slack-routing.ts /usr/local/lib/openclaw-railway/check-slack-routing.ts
-RUN node /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-railway/openclaw-slack-routing.patch \
+RUN node /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-slack-routing.patch \
  && test "$(node -p 'require("/app/package.json").version')" = "$(node -p 'require("/app/dist/build-info.json").version')"
 
 # Railway mounts volumes owned by root, so the container starts as root only
