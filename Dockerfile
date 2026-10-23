@@ -27,8 +27,8 @@ ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
     OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
     OPENCLAW_PREFER_PNPM=1 \
     OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB=4352
-RUN --mount=from=openclaw-release,source=/app/dist/extensions,target=/tmp/release-extensions \
-    set -eu; \
+COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
+RUN set -eu; \
     selected_plugins="$(node -e 'process.stdout.write(require("node:fs").readdirSync("/tmp/release-extensions").join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
     pnpm ui:build; \
