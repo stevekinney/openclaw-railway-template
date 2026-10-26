@@ -34,7 +34,8 @@ RUN git apply --check /tmp/openclaw-plugin-capture.patch \
  && git apply --check /tmp/openclaw-slack-routing.patch \
  && git apply /tmp/openclaw-slack-routing.patch \
  && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));'
-RUN pnpm test src/infra/update-database-generations.test.ts src/infra/update-database-backup.test.ts src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
+RUN pnpm test src/infra/sqlite-snapshot-prefetch.test.ts src/infra/sqlite-snapshot-cow.test.ts src/infra/sqlite-snapshot.file-id.test.ts src/infra/sqlite-snapshot.transfer.test.ts src/infra/update-database-restore.test.ts src/snapshot/git-backup-codec.test.ts src/snapshot/local-repository.test.ts src/infra/update-database-generations.test.ts src/infra/update-database-backup.test.ts src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
+ && pnpm test extensions/codex/worker-entry-contract.test.ts extensions/codex/session-history-worker-runtime.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs src/plugins/hooks.resolve-inbound-route.test.ts src/channels/session.test.ts src/infra/outbound/session-context.test.ts src/infra/system-events.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs --config test/vitest/vitest.extension-slack.config.ts --maxWorkers=1
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
@@ -76,6 +77,12 @@ RUN node /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /et
 # drops to the image's unprivileged `node` user before OpenClaw runs.
 # hadolint ignore=DL3002,DL3066
 USER root
+
+# Worker threads resolve SDK imports through the exact packaged host. Install
+# the self-link after pruning so directory walks cannot recurse through it.
+COPY scripts/check-runtime-workers.ts /usr/local/lib/openclaw-railway/check-runtime-workers.ts
+RUN ln -s /app /app/node_modules/openclaw \
+ && node /usr/local/lib/openclaw-railway/check-runtime-workers.ts /app
 
 # The Gateway listens on loopback only (gateway.tailscale.mode=serve requires
 # it), on 18789. Tailscale Serve, which OpenClaw manages, is the only way in.
