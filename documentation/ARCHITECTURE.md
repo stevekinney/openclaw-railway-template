@@ -107,7 +107,7 @@ can't run unattended at first boot either. A one-time seed is the smallest fix
 that keeps OpenClaw's clobbered-config safety check enabled; the alternative,
 `gateway --allow-unconfigured`, would disable that check permanently.
 
-The seed contains only infrastructure settings:
+The seed contains infrastructure settings and explicitly pins OpenClaw's existing heartbeat DM default:
 
 | Key | Value | Why |
 | --- | --- | --- |
@@ -118,12 +118,12 @@ The seed contains only infrastructure settings:
 | `gateway.auth.rateLimit` | 10 failures / 60 s, 5-minute lockout | Failed-auth limiting per client and scope. |
 | `gateway.terminal.enabled` | `false` | The operator terminal is a host shell inheriting the Gateway environment (including secrets). Enable it deliberately if you want it. |
 | `gateway.nodes.pairing.sshVerify` | `false` | Disables SSH-verified node auto-approval; every node is approved by hand. |
+| `agents.defaults.heartbeat.directPolicy` | `allow` | Makes the existing permissive DM default explicit without selecting a delivery destination. |
 
 There is no `gateway.publicOrigin` and no device-pair `publicUrl`: with managed
 Serve, OpenClaw knows its own address. Browser loads from the `.ts.net` name are
 private same-origin requests, and `openclaw qr` advertises the Serve URL.
-Agent-level policy (tools, channel allowlists) is the operator's choice; see
-[SECURITY.md](SECURITY.md).
+Tools, channel allowlists, heartbeat destinations, and explicit heartbeat policy overrides remain the operator's choice; see [SECURITY.md](SECURITY.md). The seed applies only on first boot and never overwrites an existing configuration.
 
 ## The sidecar
 
