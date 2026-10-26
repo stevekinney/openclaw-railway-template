@@ -73,6 +73,12 @@ test("disposable SQLite inspection snapshots use container storage", () => {
   assert.equal(findService("openclaw").variables?.XDG_CACHE_HOME?.value, "/tmp");
 });
 
+test("the baseline explicitly allows heartbeat DMs without selecting a delivery destination", async () => {
+  const seed = JSON.parse(await readFile(new URL("../config/openclaw.seed.json", import.meta.url), "utf8"));
+  assert.equal(seed.agents?.defaults?.heartbeat?.directPolicy, "allow");
+  assert.equal(seed.agents?.defaults?.heartbeat?.target, undefined);
+});
+
 test("no service is exposed publicly", () => {
   for (const name of ["openclaw"]) {
     const service = findService(name);
