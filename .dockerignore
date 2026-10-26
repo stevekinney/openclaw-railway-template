@@ -14,3 +14,4 @@
 !tools/package-lock.json
 !scripts/openclaw-plugin-capture.patch
 !scripts/check-slack-routing.ts
+!scripts/check-runtime-workers.ts
