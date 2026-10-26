@@ -1,5 +1,5 @@
 diff --git a/docker-entrypoint.mjs b/docker-entrypoint.mjs
-index 3abe74e9..5ee95118 100644
+index 3abe74e9f8..5ee951180f 100644
 --- a/docker-entrypoint.mjs
 +++ b/docker-entrypoint.mjs
 @@ -1,5 +1,6 @@
@@ -185,7 +185,7 @@ index 3abe74e9..5ee95118 100644
    // Replace the adapter so tini continues to supervise the original command directly.
    process.execve(program, command, process.env);
 diff --git a/extensions/codex/package.json b/extensions/codex/package.json
-index a70b4b3b..f2bcb01f 100644
+index a70b4b3b37..f2bcb01f88 100644
 --- a/extensions/codex/package.json
 +++ b/extensions/codex/package.json
 @@ -43,7 +43,8 @@
@@ -199,7 +199,7 @@ index a70b4b3b..f2bcb01f 100644
      },
      "release": {
 diff --git a/extensions/codex/session-history-worker-runtime.test.ts b/extensions/codex/session-history-worker-runtime.test.ts
-index b5fbf9f8..3624bb85 100644
+index b5fbf9f86b..3624bb852f 100644
 --- a/extensions/codex/session-history-worker-runtime.test.ts
 +++ b/extensions/codex/session-history-worker-runtime.test.ts
 @@ -7,9 +7,15 @@ import {
@@ -264,7 +264,7 @@ index b5fbf9f8..3624bb85 100644
 +});
 diff --git a/extensions/codex/worker-entry-contract.test.ts b/extensions/codex/worker-entry-contract.test.ts
 new file mode 100644
-index 00000000..65e46c4c
+index 0000000000..65e46c4ce8
 --- /dev/null
 +++ b/extensions/codex/worker-entry-contract.test.ts
 @@ -0,0 +1,17 @@
@@ -285,8 +285,687 @@ index 00000000..65e46c4c
 +    );
 +  });
 +});
+diff --git a/src/agents/prepared-model-runtime.inbound-registry.ts b/src/agents/prepared-model-runtime.inbound-registry.ts
+index c0eae3b001..c45afb142f 100644
+--- a/src/agents/prepared-model-runtime.inbound-registry.ts
++++ b/src/agents/prepared-model-runtime.inbound-registry.ts
+@@ -7,10 +7,7 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
+ import { getPluginRegistryGatewayOwner } from "../plugins/registry-lifecycle.js";
+ import type { PluginRegistry } from "../plugins/registry-types.js";
+ import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+-import {
+-  getPluginRuntimeLoadContext,
+-  getReusablePluginRuntimeActivation,
+-} from "../plugins/runtime/load-context.js";
++import { getReusablePluginRuntimeActivation } from "../plugins/runtime/load-context.js";
+ import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
+ import type { PreparedModelRuntimeBuildResources } from "./prepared-model-runtime.resources.js";
+ import type {
+@@ -62,7 +59,6 @@ export function preparedModelRuntimeWorkspaceFactsKey(input: PreparedModelRuntim
+ /** Gateway-hosted prepared loads borrow unchanged instances from the live Gateway registry. */
+ function resolveLendingGatewayRegistry(
+   input: PreparedInboundRegistryInput,
+-  metadataSnapshot: PluginMetadataSnapshot,
+ ): PluginRegistry | undefined {
+   if (input.allowGatewaySubagentBinding !== true || input.env !== undefined) {
+     return undefined;
+@@ -70,11 +66,9 @@ function resolveLendingGatewayRegistry(
+   // Startup and admitted turns carry their Gateway registry through the same scope.
+   // A process-active sibling with matching files is not this caller's runtime owner.
+   const requestRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
+-  const registry = requestRegistry && getPluginRegistryGatewayOwner(requestRegistry)?.current();
+-  return registry &&
+-    getPluginRuntimeLoadContext(registry)?.workspaceDir === metadataSnapshot.workspaceDir
+-    ? registry
+-    : undefined;
++  // The loader checks each borrowed plugin's source, manifest and activation;
++  // global instances can remain identical across workspace registries.
++  return requestRegistry && getPluginRegistryGatewayOwner(requestRegistry)?.current();
+ }
+
+ /** Loads generic plugin facts without acquiring model, catalog, or credential state. */
+@@ -84,7 +78,7 @@ export function loadPreparedInboundPluginRegistry(
+   configuredHarnessRuntimes?: readonly string[],
+   onPrimaryRegistry?: (registry: PluginRegistry) => void,
+ ): PluginRegistry {
+-  const gatewayRegistry = resolveLendingGatewayRegistry(input, metadataSnapshot);
++  const gatewayRegistry = resolveLendingGatewayRegistry(input);
+   // Registry-owned facts survive an outer reload cache without allowing stale
+   // metadata or changed activation inputs to reuse already-registered callbacks.
+   const reusableGatewayRegistry =
+@@ -224,7 +218,7 @@ export function prepareWorkspacePluginRegistries(
+             ...(preferBuiltPluginArtifacts ? { preferBuiltPluginArtifacts: true } : {}),
+             selections: input.runtimePluginSelections,
+             configuredHarnessRuntimes: getConfiguredHarnessRuntimes?.(),
+-            borrowRegistry: resolveLendingGatewayRegistry(input, metadataSnapshot),
++            borrowRegistry: resolveLendingGatewayRegistry(input),
+           },
+           (source) => {
+             loadedPrimaryRegistry =
+diff --git a/src/agents/prepared-model-runtime.startup-registry.test.ts b/src/agents/prepared-model-runtime.startup-registry.test.ts
+index 4e7158e4b4..b787cdf8d8 100644
+--- a/src/agents/prepared-model-runtime.startup-registry.test.ts
++++ b/src/agents/prepared-model-runtime.startup-registry.test.ts
+@@ -25,6 +25,7 @@ import {
+   getActivePluginRegistry,
+ } from "../plugins/runtime.js";
+ import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
++import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
+ import type { RuntimePluginLoadPurpose } from "./harness/runtime-plugin-load-plan.js";
+ import {
+   createPreparedInboundRegistryLoader,
+@@ -193,6 +194,115 @@ it.each([
+   },
+ );
+
++it("borrows global startup instances across workspaces without borrowing shadowed sources", async () => {
++  useNoBundledPlugins();
++  const workspaceDir = tempDirs.make("openclaw-prepared-global-workspace-");
++  vi.stubEnv("OPENCLAW_STATE_DIR", tempDirs.make("openclaw-prepared-global-state-"));
++  const fixture = writePlugin({
++    id: "global-startup-provider",
++    dir: tempDirs.make("openclaw-prepared-global-plugin-"),
++    registration: 'api.registerProvider({ id: "selected", label: "Selected", auth: [] });',
++  });
++  fs.writeFileSync(
++    path.join(fixture.dir, "openclaw.plugin.json"),
++    JSON.stringify({
++      ...JSON.parse(fs.readFileSync(path.join(fixture.dir, "openclaw.plugin.json"), "utf8")),
++      providers: ["selected"],
++    }),
++  );
++  const config: OpenClawConfig = {
++    plugins: {
++      allow: [fixture.id],
++      load: { paths: [fixture.file] },
++      slots: { memory: "none" },
++      entries: { [fixture.id]: { enabled: true } },
++    },
++  };
++  await using cache = createPluginCache();
++  await withPluginCache(cache, async () => {
++    const firstWorkspace = path.join(workspaceDir, "first");
++    const rootMetadata = loadPluginMetadataSnapshot({ config, workspaceDir: firstWorkspace });
++    const root = await loadAndActivateRootPluginRegistry({
++      config,
++      manifestRegistry: rootMetadata.manifestRegistry,
++      discovery: rootMetadata.discovery,
++      onlyPluginIds: [fixture.id],
++      runtimeOptions: { allowGatewaySubagentBinding: true },
++      runtimeSideEffects: true,
++      cache: false,
++      throwOnLoadError: true,
++    });
++    const gateway = createPluginRegistryOwner(root);
++    const context = getPluginRuntimeLoadContext(root);
++    try {
++      expect(rootMetadata.workspaceDir).toBe(firstWorkspace);
++      expect(context?.workspaceDir).toBeUndefined();
++      await using resources = new PreparedModelRuntimeBuildResources(retainPreparedPluginRegistry);
++      const loadInbound = createPreparedInboundRegistryLoader();
++      for (const agent of ["first", "second"]) {
++        const selectedWorkspace = path.join(workspaceDir, agent);
++        const shadow = agent === "second";
++        const shadowPlugin = shadow
++          ? writePlugin({
++              id: fixture.id,
++              dir: path.join(selectedWorkspace, ".openclaw", "extensions", fixture.id),
++              filename: "index.cjs",
++              registration:
++                'api.registerProvider({ id: "selected", label: "Workspace", auth: [] });',
++            })
++          : undefined;
++        const selectedConfig = shadow
++          ? { ...config, plugins: { ...config.plugins, load: { paths: [] } } }
++          : config;
++        const metadata = shadow
++          ? loadPluginMetadataSnapshot({ config: selectedConfig, workspaceDir: selectedWorkspace })
++          : rootMetadata;
++        const input = {
++          config: selectedConfig,
++          workspaceDir: selectedWorkspace,
++          agentDir: selectedWorkspace,
++          allowGatewaySubagentBinding: true,
++          runtimePluginSelections: [
++            { provider: "selected", modelId: "model", runtime: "openclaw" },
++          ],
++        };
++        const prepared = await withPluginRuntimeRegistryScope(root, () =>
++          prepareWorkspacePluginRegistries(
++            input,
++            metadata,
++            (registry) => resources.retainRegistry(registry),
++            loadInbound,
++            true,
++            undefined,
++            () => [],
++          ),
++        );
++        prepareOwnedPluginLoadContext(
++          input,
++          process.env,
++          prepared.runtimePluginRegistry,
++          metadata,
++          true,
++          prepared.inboundPluginRegistry,
++        );
++        const record = prepared.runtimePluginRegistry?.plugins.find(
++          (plugin) => plugin.id === fixture.id,
++        );
++        expect(record?.status).toBe("loaded");
++        expect(record === root.plugins[0]).toBe(!shadow);
++        expect(record?.source).toBe(shadowPlugin?.file ?? fixture.file);
++        expect(prepared.runtimePluginRegistry?.providers[0]?.provider.label).toBe(
++          shadow ? "Workspace" : "Selected",
++        );
++        expect(getPluginRuntimeLoadContext(root)).toBe(context);
++        expect(getPluginRuntimeLoadContext(root)?.workspaceDir).toBeUndefined();
++      }
++    } finally {
++      await gateway.close();
++    }
++  });
++});
++
+ it.each(["inbound", "selected", "inspection"] as const)(
+   "borrows hooks only from the admitting Gateway through %s preparation",
+   async (producer) => {
+diff --git a/src/commands/doctor-config-flow-preparation.ts b/src/commands/doctor-config-flow-preparation.ts
+new file mode 100644
+index 0000000000..b1967b2bf3
+--- /dev/null
++++ b/src/commands/doctor-config-flow-preparation.ts
+@@ -0,0 +1,82 @@
++import { tryResolveSoleAgentId } from "../agents/agent-scope-config.js";
++import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
++import { withProgress } from "../cli/progress.js";
++import type { OpenClawConfig } from "../config/types.openclaw.js";
++import { runDoctorConfigPreflight } from "./doctor-config-preflight.js";
++import type { DoctorOptions, DoctorPrompter } from "./doctor-prompter.js";
++import { createWorkspaceAliasMigrationRepair } from "./doctor-workspace-alias.js";
++import { prepareDoctorConfigReferenceSource } from "./doctor/shared/config-flow-steps.js";
++import type { DoctorConfigPreflightOptions } from "./doctor/shared/config-migration-result.js";
++import type { DoctorPluginMetadataSnapshotState } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
++
++export async function prepareDoctorConfigFlow(
++  params: Pick<
++    DoctorConfigPreflightOptions,
++    "retiredStateAdmitted" | "stateSchemaPreparation" | "agentDatabaseMigrationDiscovery"
++  > & { options: DoctorOptions; prompter?: DoctorPrompter },
++) {
++  const shouldRepair = params.options.repair === true || params.options.yes === true;
++  const preflight = await withProgress(
++    {
++      label: "Checking OpenClaw state…",
++      enabled: params.options.nonInteractive !== true && params.options.json !== true,
++      delayMs: 200,
++    },
++    (progress) =>
++      runDoctorConfigPreflight({
++        retiredStateAdmitted: params.retiredStateAdmitted,
++        stateSchemaPreparation: params.stateSchemaPreparation,
++        observe: false,
++        invocationPurpose: "doctor",
++        repairPrefixedConfig: shouldRepair,
++        doctorOnlyStateMigrations: shouldRepair,
++        preparePluginMetadataSnapshot: true,
++        ...(params.agentDatabaseMigrationDiscovery
++          ? { agentDatabaseMigrationDiscovery: params.agentDatabaseMigrationDiscovery }
++          : {}),
++        beforeWorkspaceStateMigration: createWorkspaceAliasMigrationRepair(
++          params.prompter,
++          progress.done,
++        ),
++        measure: async (name, run) => {
++          progress.setLabel(`${name.slice(name.lastIndexOf(".") + 1).replaceAll("-", " ")}…`);
++          return await run();
++        },
++      }),
++  );
++  const { snapshot, baseConfig: baseCfg } = preflight;
++  const referenceSource = prepareDoctorConfigReferenceSource(snapshot);
++  const pluginMetadataSnapshotState: DoctorPluginMetadataSnapshotState = {
++    current: preflight.pluginMetadataSnapshot,
++  };
++  const { createDoctorPluginMetadataSnapshotScope } =
++    await import("./doctor/shared/plugin-metadata-snapshot-scope.js");
++  const pluginMetadataSnapshotScope = createDoctorPluginMetadataSnapshotScope({
++    getBaseSnapshot: () => pluginMetadataSnapshotState.current,
++    env: process.env,
++    getDeferredPluginIds: () =>
++      preflight.deferredPluginMigrations?.map((pending) => pending.pluginId) ?? [],
++  });
++  const runWithPluginMetadataSnapshot = pluginMetadataSnapshotScope.run;
++  const runWithCurrentPluginMetadata = <T>(config: OpenClawConfig, run: () => T): T => {
++    const soleAgentId = tryResolveSoleAgentId(config);
++    return runWithPluginMetadataSnapshot(
++      {
++        config,
++        workspaceDir: soleAgentId ? resolveAgentWorkspaceDir(config, soleAgentId) : undefined,
++      },
++      run,
++    );
++  };
++  return {
++    shouldRepair,
++    preflight,
++    snapshot,
++    baseCfg,
++    referenceSource,
++    pluginMetadataSnapshotState,
++    pluginMetadataSnapshotScope,
++    runWithPluginMetadataSnapshot,
++    runWithCurrentPluginMetadata,
++  };
++}
+diff --git a/src/commands/doctor-config-flow.legacy-scan.test.ts b/src/commands/doctor-config-flow.legacy-scan.test.ts
+new file mode 100644
+index 0000000000..33ee0aa666
+--- /dev/null
++++ b/src/commands/doctor-config-flow.legacy-scan.test.ts
+@@ -0,0 +1,84 @@
++import fs from "node:fs";
++import path from "node:path";
++import { expect, it } from "vitest";
++import { writeOpenClawConfig } from "../config/test-helpers.js";
++import { resolveDoctorHealthContributions } from "../flows/doctor-health-contributions.test-support.js";
++import { withEnvAsync } from "../test-utils/env.js";
++import {
++  prepareDoctorContext,
++  withDoctorConfigMaintenance,
++} from "./doctor-config-flow.test-support.js";
++import { useDoctorConfigPreflightHome } from "./doctor-config-preflight.test-support.js";
++
++const withHome = useDoctorConfigPreflightHome();
++
++it("does not rediscover settled legacy state after config preflight", () =>
++  withHome(async (home) => {
++    const bundledRoot = path.join(home, "bundled");
++    const pluginRoot = path.join(bundledRoot, "scan-counter");
++    const countPath = path.join(home, "detections");
++    fs.mkdirSync(pluginRoot, { recursive: true });
++    const action = { id: "state", doctorOnly: true };
++    fs.writeFileSync(
++      path.join(pluginRoot, "package.json"),
++      JSON.stringify({
++        name: "scan-counter",
++        version: "1.0.0",
++        openclaw: { extensions: ["./index.cjs"] },
++      }),
++    );
++    fs.writeFileSync(
++      path.join(pluginRoot, "openclaw.plugin.json"),
++      JSON.stringify({
++        id: "scan-counter",
++        configSchema: {},
++        doctorContract: { stateMigrations: [action] },
++      }),
++    );
++    fs.writeFileSync(path.join(pluginRoot, "index.cjs"), "throw new Error('runtime unloaded');\n");
++    fs.writeFileSync(
++      path.join(pluginRoot, "doctor-contract-api.cjs"),
++      'const fs = require("node:fs");\nmodule.exports = { stateMigrations: [{ ...' +
++        JSON.stringify(action) +
++        ', label: "Scan counter", detectLegacyState: () => { fs.appendFileSync(' +
++        JSON.stringify(countPath) +
++        ', "scan\\n"); return null; }, migrateLegacyState: () => { throw new Error("no pending migration"); } }] };\n',
++    );
++    const configPath = await writeOpenClawConfig(home, {
++      meta: { migrations: { webhookListeners: true } },
++      gateway: { mode: "local" },
++      agents: { entries: { main: { workspace: path.join(home, "workspace") } } },
++      plugins: { allow: ["scan-counter"] },
++    });
++    await withEnvAsync(
++      {
++        OPENCLAW_CONFIG_PATH: configPath,
++        OPENCLAW_BUNDLED_PLUGINS_DIR: bundledRoot,
++        OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
++        OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
++        OPENCLAW_STATE_DIR: path.join(home, "state"),
++      },
++      async () => {
++        await withDoctorConfigMaintenance(async () => {
++          const ctx = await prepareDoctorContext(configPath, {
++            options: { nonInteractive: true, repair: true },
++          });
++          expect(ctx.configResult.preflightLegacyStateConfig).toEqual(ctx.cfg);
++          const legacyState = resolveDoctorHealthContributions().find(
++            (contribution) => contribution.id === "doctor:legacy-state",
++          )!;
++          const scansAfterPreflight = fs.readFileSync(countPath, "utf8");
++          expect(scansAfterPreflight).toContain("scan\n");
++          await legacyState.run(ctx);
++          expect(fs.readFileSync(countPath, "utf8")).toBe(scansAfterPreflight);
++          ctx.cfg = { ...ctx.cfg, session: { mainKey: "changed" } };
++          await legacyState.run(ctx);
++          expect(fs.readFileSync(countPath, "utf8")).toBe(`${scansAfterPreflight}scan\n`);
++          ctx.cfg = ctx.configResult.cfg;
++          ctx.invalidatePluginMetadataSnapshot?.();
++          await legacyState.run(ctx);
++          expect(fs.readFileSync(countPath, "utf8")).toBe(`${scansAfterPreflight}scan\nscan\n`);
++        });
++      },
++    );
++  }));
+diff --git a/src/commands/doctor-config-flow.ts b/src/commands/doctor-config-flow.ts
+index 76d12fa430..d39b0f9c85 100644
+--- a/src/commands/doctor-config-flow.ts
++++ b/src/commands/doctor-config-flow.ts
+@@ -1,9 +1,7 @@
+ import { homedir } from "node:os";
+ import { note } from "../../packages/terminal-core/src/note.js";
+-import { listAgentEntries, tryResolveSoleAgentId } from "../agents/agent-scope-config.js";
+-import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
++import { listAgentEntries } from "../agents/agent-scope-config.js";
+ import { formatCliCommand } from "../cli/command-format.js";
+-import { withProgress } from "../cli/progress.js";
+ import { configIncludeOwnsAgentRoster } from "../config/agent-roster-provenance.js";
+ import { readRecentConfigAuditRecords } from "../config/io.audit.js";
+ import { hashConfigRaw } from "../config/io.read-helpers.js";
+@@ -13,34 +11,20 @@ import {
+ } from "../config/legacy.default-agent-owner.js";
+ import { findLegacyConfigRuleIssues } from "../config/legacy.js";
+ import { resolveLegacyAgentRosterOwner } from "../config/legacy.roster.js";
+-import { CONFIG_PATH } from "../config/paths.js";
+ import type { OpenClawConfig } from "../config/types.openclaw.js";
+ import { callGateway } from "../gateway/call.js";
+ import type { PreparedAgentDatabaseMigrationDiscovery } from "../infra/state-migrations.media-persistence-targets.js";
+ import type { LegacyStateMigrationStepReceipt } from "../infra/state-migrations.types.js";
+ import type { RuntimeEnv } from "../runtime.js";
+ import { createPluginCapabilityConsentPrompter } from "../wizard/plugin-capability-consent.js";
+-import {
+-  noteDoctorHookConfigWarnings,
+-  noteImplicitFallbackClobberWarnings,
+-  noteMcpOriginWarning,
+-  noteMediaCliModelWarnings,
+-  noteMissingDefaultAgentOwner,
+-  noteOpencodeProviderOverrides,
+-  noteSandboxOriginProxyWarning,
+-} from "./doctor-config-analysis.js";
+-import { runDoctorConfigPreflight } from "./doctor-config-preflight.js";
++import { noteDoctorHookConfigWarnings } from "./doctor-config-analysis.js";
++import { prepareDoctorConfigFlow } from "./doctor-config-flow-preparation.js";
+ import type { DoctorOptions, DoctorPrompter } from "./doctor-prompter.js";
+-import { createWorkspaceAliasMigrationRepair } from "./doctor-workspace-alias.js";
+ import { createDoctorChangesPanelSink } from "./doctor/changes-panel-sink.js";
+ import { cronCodexRuntimePolicyTargetKey } from "./doctor/cron/store-migration.js";
+ import { emitDoctorNotes, sanitizeDoctorNote } from "./doctor/emit-notes.js";
+-import { finalizeDoctorConfigFlow } from "./doctor/finalize-config-flow.js";
+-import {
+-  applyLegacyCompatibilityStep,
+-  applyUnknownConfigKeyStep,
+-  prepareDoctorConfigReferenceSource,
+-} from "./doctor/shared/config-flow-steps.js";
++import { finishDoctorConfigFlow } from "./doctor/finalize-config-flow.js";
++import { applyLegacyCompatibilityStep } from "./doctor/shared/config-flow-steps.js";
+ import { prepareDoctorConfigMigrationResult } from "./doctor/shared/config-migration-result.js";
+ import {
+   applyDoctorConfigMutation,
+@@ -50,8 +34,6 @@ import {
+ import { listDoctorConfiguredChannelIds } from "./doctor/shared/configured-channel-ids.js";
+ import { normalizeCompatibilityConfigValues } from "./doctor/shared/legacy-config-core-migrate.js";
+ import { LEGACY_AGENT_ROSTER_RULES } from "./doctor/shared/legacy-config-migrations.runtime.entries.js";
+-import type { DoctorPluginMetadataSnapshotState } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
+-import { canWriteDoctorInclude } from "./doctor/shared/roster-include-write.js";
+
+ async function refreshGatewayAuthStateAfterAuthProfileRepair(): Promise<void> {
+   for (const request of [
+@@ -75,64 +57,17 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
+   runtime?: RuntimeEnv;
+   prompter?: DoctorPrompter;
+ }) {
+-  const shouldRepair = params.options.repair === true || params.options.yes === true;
+-  const preflight = await withProgress(
+-    {
+-      label: "Checking OpenClaw state…",
+-      enabled: params.options.nonInteractive !== true && params.options.json !== true,
+-      delayMs: 200,
+-    },
+-    (progress) =>
+-      runDoctorConfigPreflight({
+-        retiredStateAdmitted: params.retiredStateAdmitted,
+-        stateSchemaPreparation: params.stateSchemaPreparation,
+-        observe: false,
+-        invocationPurpose: "doctor",
+-        repairPrefixedConfig: shouldRepair,
+-        doctorOnlyStateMigrations: shouldRepair,
+-        preparePluginMetadataSnapshot: true,
+-        ...(params.agentDatabaseMigrationDiscovery
+-          ? { agentDatabaseMigrationDiscovery: params.agentDatabaseMigrationDiscovery }
+-          : {}),
+-        beforeWorkspaceStateMigration: createWorkspaceAliasMigrationRepair(
+-          params.prompter,
+-          progress.done,
+-        ),
+-        measure: async (name, run) => {
+-          progress.setLabel(`${name.slice(name.lastIndexOf(".") + 1).replaceAll("-", " ")}…`);
+-          return await run();
+-        },
+-      }),
+-  );
+-  const { snapshot, baseConfig: baseCfg } = preflight;
+-  const referenceSource = prepareDoctorConfigReferenceSource(snapshot);
+-  const pluginMetadataSnapshotState: DoctorPluginMetadataSnapshotState = {
+-    current: preflight.pluginMetadataSnapshot,
+-  };
+-  const { createDoctorPluginMetadataSnapshotScope } =
+-    await import("./doctor/shared/plugin-metadata-snapshot-scope.js");
+-  const pluginMetadataSnapshotScope = createDoctorPluginMetadataSnapshotScope({
+-    getBaseSnapshot: () => pluginMetadataSnapshotState.current,
+-    env: process.env,
+-    getDeferredPluginIds: () =>
+-      preflight.deferredPluginMigrations?.map((pending) => pending.pluginId) ?? [],
+-  });
+-  const runWithPluginMetadataSnapshot = pluginMetadataSnapshotScope.run;
+-  const invalidatePluginMetadataSnapshot = () => {
+-    // Filesystem/install repairs replace the authoritative plugin generation.
+-    pluginMetadataSnapshotState.current = undefined;
+-    pluginMetadataSnapshotScope.invalidate();
+-  };
+-  const runWithCurrentPluginMetadata = <T>(config: OpenClawConfig, run: () => T): T => {
+-    const soleAgentId = tryResolveSoleAgentId(config);
+-    return runWithPluginMetadataSnapshot(
+-      {
+-        config,
+-        workspaceDir: soleAgentId ? resolveAgentWorkspaceDir(config, soleAgentId) : undefined,
+-      },
+-      run,
+-    );
+-  };
++  const preparation = await prepareDoctorConfigFlow(params);
++  const {
++    shouldRepair,
++    preflight,
++    snapshot,
++    baseCfg,
++    referenceSource,
++    pluginMetadataSnapshotState,
++    runWithPluginMetadataSnapshot,
++    runWithCurrentPluginMetadata,
++  } = preparation;
+   let state: DoctorConfigMutationState = {
+     cfg: baseCfg,
+     candidate: structuredClone(baseCfg),
+@@ -538,132 +473,24 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
+     });
+   }
+
+-  const mutableAllowlistWarnings = collectMutableAllowlistWarnings
+-    ? await runWithCurrentPluginMetadata(state.candidate, () =>
+-        collectMutableAllowlistWarnings({
+-          cfg: state.candidate,
+-          env: process.env,
+-        }),
+-      )
+-    : [];
+-  if (mutableAllowlistWarnings.length > 0) {
+-    note(sanitizeDoctorNote(mutableAllowlistWarnings.join("\n")), "Doctor warnings");
+-  }
+-
+-  const unknownStep = applyUnknownConfigKeyStep({
++  return await finishDoctorConfigFlow({
++    preparation,
+     state,
+-    shouldRepair,
++    params,
++    collectMutableAllowlistWarnings,
+     doctorFixCommand,
++    changesPanelSink,
++    configRepairWarnings,
++    legacyStep,
++    sessionStoreOwnerRecovery,
++    explicitSetPaths,
++    persistCanonicalAgentRoster,
++    shouldRepairCronCodexModelRefsAfterConfigWrite,
++    retiredPhoneControlCleanup,
++    blockedCodexProviderPlan,
++    openAICodexAuthProfileIdMap,
++    retiredModelRefConfig,
++    modelRetirementRepairRan,
++    finalizeMigrationResult,
+   });
+-  state = unknownStep.state;
+-  if (unknownStep.removed.length > 0 || unknownStep.repairs.length > 0) {
+-    const lines = [
+-      ...unknownStep.removed.map((pathLocal) => `- ${pathLocal}`),
+-      ...unknownStep.repairs.map((change) => `- ${change}`),
+-    ];
+-    if (shouldRepair) {
+-      changesPanelSink.emit(lines);
+-    } else {
+-      note(lines.join("\n"), "Unknown config keys");
+-    }
+-  }
+-  if (unknownStep.warnings.length > 0) {
+-    note(unknownStep.warnings.join("\n"), "Doctor warnings");
+-  }
+-
+-  const finalized = await finalizeDoctorConfigFlow({
+-    ...state,
+-    snapshot,
+-    shouldRepair,
+-    confirm: params.confirm,
+-    note,
+-  });
+-  const cfg = finalized.cfg;
+-  const shouldWriteConfig = finalized.shouldWriteConfig && legacyStep.blocksWrite !== true;
+-  const includeBoundaryWrite =
+-    shouldWriteConfig &&
+-    canWriteDoctorInclude(
+-      snapshot,
+-      cfg,
+-      { persistCanonicalAgentRoster, explicitSetPaths },
+-      referenceSource?.installedPluginIdRecovery,
+-    );
+-
+-  const configuredOpencodePluginIds = [
+-    cfg.models?.providers?.opencode || cfg.models?.providers?.["opencode-zen"]
+-      ? "opencode"
+-      : undefined,
+-    cfg.models?.providers?.["opencode-go"] ? "opencode-go" : undefined,
+-  ].filter((pluginId): pluginId is string => pluginId !== undefined);
+-  let activeOpencodePluginIds: string[] = [];
+-  if (configuredOpencodePluginIds.length > 0) {
+-    const { resolveEnabledProviderPluginIds } = await import("../plugins/providers.js");
+-    activeOpencodePluginIds = runWithCurrentPluginMetadata(cfg, () =>
+-      resolveEnabledProviderPluginIds({ config: cfg, onlyPluginIds: configuredOpencodePluginIds }),
+-    );
+-  }
+-  noteOpencodeProviderOverrides(cfg, {
+-    opencodePluginActive: activeOpencodePluginIds.includes("opencode"),
+-    opencodeGoPluginActive: activeOpencodePluginIds.includes("opencode-go"),
+-  });
+-  noteImplicitFallbackClobberWarnings(cfg);
+-  noteSandboxOriginProxyWarning(cfg);
+-  noteMcpOriginWarning(cfg);
+-  noteMediaCliModelWarnings(cfg);
+-  noteMissingDefaultAgentOwner(cfg);
+-
+-  const migrationResult = await finalizeMigrationResult({
+-    cfg,
+-    shouldWriteConfig,
+-    pluginInventoryChanged: pluginMetadataSnapshotState.inventoryChanged,
+-    metadataSnapshot: pluginMetadataSnapshotState.current,
+-    runWithCurrentPluginMetadata,
+-  });
+-
+-  // Queued repair panels describe candidate mutations; the write runner prints
+-  // them as "Doctor changes" only after the atomic write commits. A blocked
+-  // write drops them — its blocking note already states nothing was changed.
+-  const pendingChangePanels = changesPanelSink.drain();
+-
+-  return {
+-    ...finalized,
+-    ...(shouldWriteConfig && sessionStoreOwnerRecovery.changes.length > 0
+-      ? {
+-          confirmedConfigSource: {
+-            path: snapshot.path,
+-            hash: snapshot.hash ?? hashConfigRaw(snapshot.raw),
+-          },
+-        }
+-      : {}),
+-    ...(referenceSource ? { referenceSource } : {}),
+-    path: snapshot.path ?? CONFIG_PATH,
+-    shouldWriteConfig,
+-    ...(configRepairWarnings.length ? { warnings: [...new Set(configRepairWarnings)] } : {}),
+-    ...(shouldWriteConfig && pendingChangePanels.length > 0 ? { pendingChangePanels } : {}),
+-    sourceConfigValid: snapshot.valid,
+-    ...(legacyStep.partiallyValid === true ? { skipPluginValidationOnWrite: true } : {}),
+-    ...(shouldWriteConfig && explicitSetPaths.length > 0 ? { explicitSetPaths } : {}),
+-    ...(shouldWriteConfig && persistCanonicalAgentRoster
+-      ? { persistCanonicalAgentRoster: true }
+-      : {}),
+-    ...(includeBoundaryWrite ? { skipWizardMetadataForIncludeWrite: true } : {}),
+-    ...(shouldRepairCronCodexModelRefsAfterConfigWrite
+-      ? { shouldRepairCronCodexModelRefsAfterConfigWrite: true }
+-      : {}),
+-    ...(shouldRepair &&
+-    retiredPhoneControlCleanup.cleanupPending &&
+-    retiredPhoneControlCleanup.cleanupSafe
+-      ? { retiredPhoneControlStateCleanupPending: true }
+-      : {}),
+-    ...(blockedCodexProviderPlan.blockedModelIdentities.length > 0
+-      ? { blockedCodexModelIdentities: blockedCodexProviderPlan.blockedModelIdentities }
+-      : {}),
+-    ...(openAICodexAuthProfileIdMap ? { openAICodexAuthProfileIdMap } : {}),
+-    ...(retiredModelRefConfig ? { retiredModelRefConfig } : {}),
+-    modelRetirementRepairRan:
+-      modelRetirementRepairRan && !legacyStep.blocksWrite && (shouldWriteConfig || snapshot.valid),
+-    ...migrationResult,
+-    runWithPluginMetadataSnapshot,
+-    invalidatePluginMetadataSnapshot,
+-  };
+ }
+diff --git a/src/commands/doctor-config-preflight.ts b/src/commands/doctor-config-preflight.ts
+index 620afde9e6..7bad316e8c 100644
+--- a/src/commands/doctor-config-preflight.ts
++++ b/src/commands/doctor-config-preflight.ts
+@@ -1,4 +1,5 @@
+ /** Config preflight for Doctor: legacy migration, recovery, and snapshot loading. */
++import { isDeepStrictEqual } from "node:util";
+ import { note } from "../../packages/terminal-core/src/note.js";
+ import { tryGetLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
+ import { resolveStateDir } from "../config/paths.js";
+@@ -371,5 +372,16 @@ async function runDoctorConfigPreflightOperation(
+     ...(stateMigrationStepReceipts.length > 0 ? { stateMigrationStepReceipts } : {}),
+     ...(postSessionPluginMigration ? { postSessionPluginMigration } : {}),
+     ...(postSessionPluginMigrationPlanBound ? { postSessionPluginMigrationPlanBound: true } : {}),
++    ...(postSessionPluginMigrationPlanBound &&
++    deferredPluginMigrations.length === 0 &&
++    isDeepStrictEqual(stateMigrationInput?.cfg, baseConfig) &&
++    stateMigrationStepReceipts.every(
++      (receipt) =>
++        receipt.id === "plugin-doctor-post-session-state" ||
++        ((receipt.outcome === "completed" || receipt.outcome === "skipped") &&
++          receipt.warnings.length === 0),
++    )
++      ? { preflightLegacyStateConfig: baseConfig }
++      : {}),
+   };
+ }
 diff --git a/src/commands/doctor-original-capture.ts b/src/commands/doctor-original-capture.ts
-index 18354cb8..bed870fd 100644
+index 18354cb8e3..bed870fdee 100644
 --- a/src/commands/doctor-original-capture.ts
 +++ b/src/commands/doctor-original-capture.ts
 @@ -73,7 +73,7 @@ export async function preserveDoctorOriginalState(params: {
@@ -317,8 +996,836 @@ index 18354cb8..bed870fd 100644
          );
        }
        for (const warning of retirement.warnings) {
+diff --git a/src/commands/doctor/finalize-config-flow.ts b/src/commands/doctor/finalize-config-flow.ts
+index b576176e63..93342d2230 100644
+--- a/src/commands/doctor/finalize-config-flow.ts
++++ b/src/commands/doctor/finalize-config-flow.ts
+@@ -1,5 +1,26 @@
++import { note } from "../../../packages/terminal-core/src/note.js";
+ import { hashConfigRaw } from "../../config/io.read-helpers.js";
++import { CONFIG_PATH } from "../../config/paths.js";
+ import type { ConfigFileSnapshot, OpenClawConfig } from "../../config/types.openclaw.js";
++import {
++  noteImplicitFallbackClobberWarnings,
++  noteMcpOriginWarning,
++  noteMediaCliModelWarnings,
++  noteMissingDefaultAgentOwner,
++  noteOpencodeProviderOverrides,
++  noteSandboxOriginProxyWarning,
++} from "../doctor-config-analysis.js";
++import type { prepareDoctorConfigFlow } from "../doctor-config-flow-preparation.js";
++import type { DoctorOptions } from "../doctor-prompter.js";
++import type { createDoctorChangesPanelSink } from "./changes-panel-sink.js";
++import { sanitizeDoctorNote } from "./emit-notes.js";
++import {
++  applyUnknownConfigKeyStep,
++  type applyLegacyCompatibilityStep,
++} from "./shared/config-flow-steps.js";
++import type { prepareDoctorConfigMigrationResult } from "./shared/config-migration-result.js";
++import type { DoctorConfigMutationState } from "./shared/config-mutation-state.js";
++import { canWriteDoctorInclude } from "./shared/roster-include-write.js";
+
+ export async function finalizeDoctorConfigFlow(params: {
+   cfg: OpenClawConfig;
+@@ -34,3 +55,193 @@ export async function finalizeDoctorConfigFlow(params: {
+   }
+   return { cfg, shouldWriteConfig, confirmedConfigSource };
+ }
++
++/** Finish config diagnostics and preserve the write/admission handoff after repairs. */
++export async function finishDoctorConfigFlow(input: {
++  preparation: Awaited<ReturnType<typeof prepareDoctorConfigFlow>>;
++  state: DoctorConfigMutationState;
++  params: {
++    options: DoctorOptions;
++    confirm: Parameters<typeof finalizeDoctorConfigFlow>[0]["confirm"];
++  };
++  collectMutableAllowlistWarnings?: typeof import("./shared/channel-doctor.js").collectChannelDoctorMutableAllowlistWarnings;
++  doctorFixCommand: string;
++  changesPanelSink: ReturnType<typeof createDoctorChangesPanelSink>;
++  configRepairWarnings: string[];
++  legacyStep: ReturnType<typeof applyLegacyCompatibilityStep>;
++  sessionStoreOwnerRecovery: { changes: readonly string[] };
++  explicitSetPaths: string[][];
++  persistCanonicalAgentRoster: boolean;
++  shouldRepairCronCodexModelRefsAfterConfigWrite: boolean;
++  retiredPhoneControlCleanup: { cleanupPending: boolean; cleanupSafe: boolean };
++  blockedCodexProviderPlan: { blockedModelIdentities: string[] };
++  openAICodexAuthProfileIdMap?: ReadonlyMap<string, string>;
++  retiredModelRefConfig?: Pick<OpenClawConfig, "agents" | "models">;
++  modelRetirementRepairRan: boolean;
++  finalizeMigrationResult: ReturnType<typeof prepareDoctorConfigMigrationResult>;
++}) {
++  const {
++    preparation,
++    params,
++    collectMutableAllowlistWarnings,
++    doctorFixCommand,
++    changesPanelSink,
++    configRepairWarnings,
++    legacyStep,
++    sessionStoreOwnerRecovery,
++    explicitSetPaths,
++    persistCanonicalAgentRoster,
++    shouldRepairCronCodexModelRefsAfterConfigWrite,
++    retiredPhoneControlCleanup,
++    blockedCodexProviderPlan,
++    openAICodexAuthProfileIdMap,
++    retiredModelRefConfig,
++    modelRetirementRepairRan,
++    finalizeMigrationResult,
++  } = input;
++  let { state } = input;
++  const {
++    shouldRepair,
++    snapshot,
++    referenceSource,
++    pluginMetadataSnapshotState,
++    pluginMetadataSnapshotScope,
++    runWithPluginMetadataSnapshot,
++    runWithCurrentPluginMetadata,
++  } = preparation;
++  const mutableAllowlistWarnings = collectMutableAllowlistWarnings
++    ? await runWithCurrentPluginMetadata(state.candidate, () =>
++        collectMutableAllowlistWarnings({
++          cfg: state.candidate,
++          env: process.env,
++        }),
++      )
++    : [];
++  if (mutableAllowlistWarnings.length > 0) {
++    note(sanitizeDoctorNote(mutableAllowlistWarnings.join("\n")), "Doctor warnings");
++  }
++
++  const unknownStep = applyUnknownConfigKeyStep({
++    state,
++    shouldRepair,
++    doctorFixCommand,
++  });
++  state = unknownStep.state;
++  if (unknownStep.removed.length > 0 || unknownStep.repairs.length > 0) {
++    const lines = [
++      ...unknownStep.removed.map((pathLocal) => `- ${pathLocal}`),
++      ...unknownStep.repairs.map((change) => `- ${change}`),
++    ];
++    if (shouldRepair) {
++      changesPanelSink.emit(lines);
++    } else {
++      note(lines.join("\n"), "Unknown config keys");
++    }
++  }
++  if (unknownStep.warnings.length > 0) {
++    note(unknownStep.warnings.join("\n"), "Doctor warnings");
++  }
++
++  const finalized = await finalizeDoctorConfigFlow({
++    ...state,
++    snapshot,
++    shouldRepair,
++    confirm: params.confirm,
++    note,
++  });
++  const cfg = finalized.cfg;
++  const shouldWriteConfig = finalized.shouldWriteConfig && legacyStep.blocksWrite !== true;
++  const includeBoundaryWrite =
++    shouldWriteConfig &&
++    canWriteDoctorInclude(
++      snapshot,
++      cfg,
++      { persistCanonicalAgentRoster, explicitSetPaths },
++      referenceSource?.installedPluginIdRecovery,
++    );
++
++  const configuredOpencodePluginIds = [
++    cfg.models?.providers?.opencode || cfg.models?.providers?.["opencode-zen"]
++      ? "opencode"
++      : undefined,
++    cfg.models?.providers?.["opencode-go"] ? "opencode-go" : undefined,
++  ].filter((pluginId): pluginId is string => pluginId !== undefined);
++  let activeOpencodePluginIds: string[] = [];
++  if (configuredOpencodePluginIds.length > 0) {
++    const { resolveEnabledProviderPluginIds } = await import("../../plugins/providers.js");
++    activeOpencodePluginIds = runWithCurrentPluginMetadata(cfg, () =>
++      resolveEnabledProviderPluginIds({ config: cfg, onlyPluginIds: configuredOpencodePluginIds }),
++    );
++  }
++  noteOpencodeProviderOverrides(cfg, {
++    opencodePluginActive: activeOpencodePluginIds.includes("opencode"),
++    opencodeGoPluginActive: activeOpencodePluginIds.includes("opencode-go"),
++  });
++  noteImplicitFallbackClobberWarnings(cfg);
++  noteSandboxOriginProxyWarning(cfg);
++  noteMcpOriginWarning(cfg);
++  noteMediaCliModelWarnings(cfg);
++  noteMissingDefaultAgentOwner(cfg);
++
++  const migrationResult = await finalizeMigrationResult({
++    cfg,
++    shouldWriteConfig,
++    pluginInventoryChanged: pluginMetadataSnapshotState.inventoryChanged,
++    metadataSnapshot: pluginMetadataSnapshotState.current,
++    runWithCurrentPluginMetadata,
++  });
++
++  // Queued repair panels describe candidate mutations; the write runner prints
++  // them as "Doctor changes" only after the atomic write commits. A blocked
++  // write drops them — its blocking note already states nothing was changed.
++  const pendingChangePanels = changesPanelSink.drain();
++
++  const configResult = {
++    ...finalized,
++    ...(shouldWriteConfig && sessionStoreOwnerRecovery.changes.length > 0
++      ? {
++          confirmedConfigSource: {
++            path: snapshot.path,
++            hash: snapshot.hash ?? hashConfigRaw(snapshot.raw),
++          },
++        }
++      : {}),
++    ...(referenceSource ? { referenceSource } : {}),
++    path: snapshot.path ?? CONFIG_PATH,
++    shouldWriteConfig,
++    ...(configRepairWarnings.length ? { warnings: [...new Set(configRepairWarnings)] } : {}),
++    ...(shouldWriteConfig && pendingChangePanels.length > 0 ? { pendingChangePanels } : {}),
++    sourceConfigValid: snapshot.valid,
++    ...(legacyStep.partiallyValid === true ? { skipPluginValidationOnWrite: true } : {}),
++    ...(shouldWriteConfig && explicitSetPaths.length > 0 ? { explicitSetPaths } : {}),
++    ...(shouldWriteConfig && persistCanonicalAgentRoster
++      ? { persistCanonicalAgentRoster: true }
++      : {}),
++    ...(includeBoundaryWrite ? { skipWizardMetadataForIncludeWrite: true } : {}),
++    ...(shouldRepairCronCodexModelRefsAfterConfigWrite
++      ? { shouldRepairCronCodexModelRefsAfterConfigWrite: true }
++      : {}),
++    ...(shouldRepair &&
++    retiredPhoneControlCleanup.cleanupPending &&
++    retiredPhoneControlCleanup.cleanupSafe
++      ? { retiredPhoneControlStateCleanupPending: true }
++      : {}),
++    ...(blockedCodexProviderPlan.blockedModelIdentities.length > 0
++      ? { blockedCodexModelIdentities: blockedCodexProviderPlan.blockedModelIdentities }
++      : {}),
++    ...(openAICodexAuthProfileIdMap ? { openAICodexAuthProfileIdMap } : {}),
++    ...(retiredModelRefConfig ? { retiredModelRefConfig } : {}),
++    modelRetirementRepairRan:
++      modelRetirementRepairRan && !legacyStep.blocksWrite && (shouldWriteConfig || snapshot.valid),
++    ...migrationResult,
++    runWithPluginMetadataSnapshot,
++    invalidatePluginMetadataSnapshot,
++  };
++  function invalidatePluginMetadataSnapshot() {
++    // Filesystem/install repairs replace the authoritative plugin generation.
++    delete configResult.preflightLegacyStateConfig;
++    pluginMetadataSnapshotState.current = undefined;
++    pluginMetadataSnapshotScope.invalidate();
++  }
++  return configResult;
++}
+diff --git a/src/commands/doctor/shared/config-migration-result.ts b/src/commands/doctor/shared/config-migration-result.ts
+index d6decc9de4..f6ae710ece 100644
+--- a/src/commands/doctor/shared/config-migration-result.ts
++++ b/src/commands/doctor/shared/config-migration-result.ts
+@@ -44,6 +44,8 @@ export type DoctorConfigPreflightResult = {
+   stateMigrationStepReceipts?: LegacyStateMigrationStepReceipt[];
+   postSessionPluginMigration?: PreparedPostSessionPluginMigration;
+   postSessionPluginMigrationPlanBound?: boolean;
++  /** Config whose pre-session state migrations completed without unresolved work. */
++  preflightLegacyStateConfig?: OpenClawConfig;
+ };
+
+ /** Preserve migration provenance before repairs, then prepare the post-write health handoff. */
+@@ -119,6 +121,11 @@ export function prepareDoctorConfigMigrationResult(
+       ...(receipts ? { stateMigrationStepReceipts: receipts } : {}),
+       ...(postSession ? { postSessionPluginMigration: postSession } : {}),
+       ...(planBound ? { postSessionPluginMigrationPlanBound: true } : {}),
++      ...(!params.shouldWriteConfig &&
++      !params.pluginInventoryChanged &&
++      isDeepStrictEqual(preflight.preflightLegacyStateConfig, params.cfg)
++        ? { preflightLegacyStateConfig: preflight.preflightLegacyStateConfig }
++        : {}),
+     };
+   };
+ }
+diff --git a/src/flows/doctor-health-contribution-types.ts b/src/flows/doctor-health-contribution-types.ts
+index 1784906546..d4635dba64 100644
+--- a/src/flows/doctor-health-contribution-types.ts
++++ b/src/flows/doctor-health-contribution-types.ts
+@@ -53,6 +53,7 @@ type DoctorConfigResult = {
+   stateMigrationStepReceipts?: LegacyStateMigrationStepReceipt[];
+   postSessionPluginMigration?: PreparedPostSessionPluginMigration;
+   postSessionPluginMigrationPlanBound?: boolean;
++  preflightLegacyStateConfig?: OpenClawConfig;
+ };
+
+ export type DoctorHealthFlowContext = {
+diff --git a/src/flows/doctor-health-contributions.legacy-state.test.ts b/src/flows/doctor-health-contributions.legacy-state.test.ts
+new file mode 100644
+index 0000000000..b78b6122b0
+--- /dev/null
++++ b/src/flows/doctor-health-contributions.legacy-state.test.ts
+@@ -0,0 +1,50 @@
++import { afterEach, expect, it, vi } from "vitest";
++import * as terminal from "../../packages/terminal-core/src/note.js";
++import * as core from "./doctor-health-contribution-core.js";
++import {
++  createDoctorHealthFlowContext,
++  resolveDoctorHealthContributions,
++} from "./doctor-health-contributions.test-support.js";
++
++afterEach(() => vi.restoreAllMocks());
++
++// mock-isolation: Supply only the rescan's reporting fields; no migration writer runs.
++vi.mock("../infra/state-migrations.doctor.js", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("../infra/state-migrations.doctor.js")>()),
++  detectLegacyStateMigrations: vi.fn(async () => ({
++    preview: [],
++    warnings: ["prior warning", "new warning"],
++    notices: ["prior notice", "new notice"],
++  })),
++}));
++
++it("reports only new detection notices when legacy state needs another scan", async () => {
++  const note = vi.spyOn(terminal, "note").mockImplementation(() => {});
++  vi.spyOn(core, "runCoreContributionHealth").mockResolvedValue(undefined);
++  const ctx = createDoctorHealthFlowContext({
++    configResult: {
++      stateMigrationStepReceipts: [
++        {
++          id: "migration-detection",
++          phase: "shared",
++          source: [],
++          target: [],
++          requiredness: "required",
++          reversibility: "not-applicable",
++          outcome: "skipped",
++          changes: [],
++          warnings: ["prior warning"],
++          notices: ["prior notice"],
++        },
++      ],
++    },
++  });
++
++  await resolveDoctorHealthContributions()
++    .find((entry) => entry.id === "doctor:legacy-state")!
++    .run(ctx);
++
++  expect(note).toHaveBeenCalledWith("new warning", "Doctor warnings");
++  expect(note).toHaveBeenCalledWith("new notice", "Doctor notices");
++  expect(note).not.toHaveBeenCalledWith(expect.stringContaining("prior"), expect.anything());
++});
+diff --git a/src/flows/doctor-health-contributions.ts b/src/flows/doctor-health-contributions.ts
+index 172e83e697..26c762d3c8 100644
+--- a/src/flows/doctor-health-contributions.ts
++++ b/src/flows/doctor-health-contributions.ts
+@@ -1,7 +1,7 @@
+-import { randomUUID } from "node:crypto";
+ // Doctor health contributions preserve the ordered interactive doctor flow while
+ // exposing the same checks to structured lint and repair commands.
+-import fs from "node:fs";
++import { isDeepStrictEqual } from "node:util";
++import { note } from "../../packages/terminal-core/src/note.js";
+ import { measureGatewayBootstrapStep } from "../cli/startup-trace.js";
+ import { shouldManageGatewayService } from "../commands/doctor-service-repair-policy.js";
+ import { ConfigWritePostCommitError } from "../config/io.write-errors.js";
+@@ -32,6 +32,10 @@ import {
+ import { recordDoctorHealthWarnings } from "./doctor-health-contribution.js";
+ import { resolveFinalDoctorHealthContributions } from "./doctor-health-contributions-final.js";
+ import { resolveInitialDoctorHealthContributions } from "./doctor-health-contributions-initial.js";
++import {
++  runGatewayAuthHealth,
++  runGatewayConfigHealth,
++} from "./doctor-health-gateway-configuration.js";
+ import { admitDoctorUpdateInspection, resolveDoctorUpdateBudget } from "./doctor-update-budget.js";
+ import { normalizeHealthCheck } from "./health-check-adapter.js";
+ import type { DoctorHealthCheck } from "./health-check-runner-types.js";
+@@ -62,7 +66,6 @@ async function reportDeferredLegacyState(ctx: DoctorHealthFlowContext): Promise<
+   if (pendingDetails.length === 0) {
+     return;
+   }
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+   const displayedDetails = pendingDetails.slice(0, MAX_DEFERRED_LEGACY_STATE_DETAILS);
+   const omittedDetailCount = pendingDetails.length - displayedDetails.length;
+   const remediation =
+@@ -85,218 +88,66 @@ async function reportDeferredLegacyState(ctx: DoctorHealthFlowContext): Promise<
+   );
+ }
+
+-async function runGatewayConfigHealth(ctx: DoctorHealthFlowContext): Promise<void> {
+-  const { formatCliCommand } = await import("../cli/command-format.js");
+-  const { hasAmbiguousGatewayAuthModeConfig } = await import("../gateway/auth-mode-policy.js");
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+-  if (!ctx.cfg.gateway?.mode) {
+-    const lines = [
+-      "gateway.mode is unset; gateway start will be blocked.",
+-      `Fix: run ${formatCliCommand("openclaw configure")} and set Gateway mode (local/remote).`,
+-      `Or set directly: ${formatCliCommand("openclaw config set gateway.mode local")}`,
+-    ];
+-    if (!fs.existsSync(ctx.configPath)) {
+-      lines.push(`Missing config: run ${formatCliCommand("openclaw setup")} first.`);
+-    }
+-    note(lines.join("\n"), "Gateway");
+-  }
+-  if (resolveDoctorMode(ctx.cfg) === "local" && hasAmbiguousGatewayAuthModeConfig(ctx.cfg)) {
+-    note(
+-      [
+-        "gateway.auth.token and gateway.auth.password are both configured while gateway.auth.mode is unset.",
+-        "Set an explicit mode to avoid ambiguous auth selection and startup/runtime failures.",
+-        `Set token mode: ${formatCliCommand("openclaw config set gateway.auth.mode token")}`,
+-        `Set password mode: ${formatCliCommand("openclaw config set gateway.auth.mode password")}`,
+-      ].join("\n"),
+-      "Gateway auth",
+-    );
+-  }
+-}
+-
+-async function runGatewayAuthHealth(ctx: DoctorHealthFlowContext): Promise<void> {
+-  if (!ctx.sourceConfigValid) {
+-    return;
+-  }
+-  const { detectGatewayAuthHealth } = await import("./doctor-gateway-auth.js");
+-  const [finding] = await detectGatewayAuthHealth({
+-    cfg: ctx.cfg,
+-    env: ctx.env,
+-    allowExecSecretRefs: ctx.options.allowExec,
+-  });
+-  const { resolveSecretInputRef } = await import("../config/types.secrets.js");
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+-  const gatewayTokenRef = resolveSecretInputRef({
+-    value: ctx.cfg.gateway?.auth?.token,
+-    defaults: ctx.cfg.secrets?.defaults,
+-  }).ref;
+-  if (!finding) {
+-    if (gatewayTokenRef && ctx.options.generateGatewayToken === true) {
+-      note(
+-        `Gateway token generation skipped because gateway.auth.token is managed by SecretRef ${gatewayTokenRef.source}:${gatewayTokenRef.provider}:${gatewayTokenRef.id}. The referenced credential was left unchanged.`,
+-        "Gateway auth",
+-      );
+-    }
+-    return;
+-  }
+-  note([finding.message, finding.fixHint].filter(Boolean).join("\n"), "Gateway auth");
+-  if (finding.path !== "gateway.auth.token") {
+-    recordDoctorHealthWarnings(ctx, [finding]);
+-    return;
+-  }
+-  if (gatewayTokenRef) {
+-    if (
+-      gatewayTokenRef.source === "store" &&
+-      finding.requirement === "SECRET_REF_REDACTED_VALUE" &&
+-      (ctx.options.generateGatewayToken === true ||
+-        ctx.options.repair === true ||
+-        ctx.options.yes === true)
+-    ) {
+-      const { isRedactedSecretValue } = await import("../config/redact-sentinel.js");
+-      const { readSecretStoreValue, writeSecretStoreEntryWithRollback } =
+-        await import("../secrets/store/secret-store.js");
+-      const { createVerifiedSqliteSnapshot } = await import("../infra/sqlite-snapshot.js");
+-      const { resolveOpenClawStateSqlitePath } =
+-        await import("../state/openclaw-state-db.paths.js");
+-      const { randomToken } = await import("../commands/onboard-helpers.js");
+-      const database = { env: ctx.env ?? process.env };
+-      const entry = { scope: { kind: "team" as const }, name: gatewayTokenRef.id, database };
+-      let rollback: (() => Promise<boolean>) | undefined;
+-      try {
+-        const current = await readSecretStoreValue(entry);
+-        if (!current.ok || !isRedactedSecretValue(current.value)) {
+-          note(
+-            `Secret store entry "${entry.name}" changed; rerun Doctor to inspect it.`,
+-            "Gateway auth",
+-          );
+-          return;
+-        }
+-        const databasePath = resolveOpenClawStateSqlitePath(database.env);
+-        const backup = await createVerifiedSqliteSnapshot({
+-          sourcePath: databasePath,
+-          targetPath: `${databasePath}.doctor-gateway-token.${randomUUID()}.bak`,
+-          preserveRowIds: true,
+-        });
+-        const nextToken = randomToken();
+-        ({ rollback } = await writeSecretStoreEntryWithRollback({
+-          ...entry,
+-          value: nextToken,
+-          expectedValue: current.value,
+-          kind: "secret",
+-          updatedBy: "doctor",
+-        }));
+-        const repaired = await readSecretStoreValue(entry);
+-        if (!repaired.ok || repaired.value !== nextToken) {
+-          throw new Error("the replacement token could not be verified");
+-        }
+-        rollback = undefined;
+-        note(
+-          `Regenerated Gateway token in secret store entry "${entry.name}"; gateway.auth.token remains a SecretRef. Backup: ${backup.path}\nRestart the Gateway, then reconnect or re-pair devices with the new token.`,
+-          "Gateway auth",
+-        );
+-      } catch (error) {
+-        let recovery = "";
+-        try {
+-          if (rollback) {
+-            recovery = (await rollback())
+-              ? " The previous entry was restored."
+-              : " The entry changed again and was left untouched.";
+-          }
+-        } catch (rollbackError) {
+-          recovery = ` Rollback failed: ${scrubDoctorErrorMessage(rollbackError)}.`;
+-        }
+-        const warning = `Could not repair Gateway token in secret store entry "${entry.name}": ${scrubDoctorErrorMessage(error)}.${recovery} Rerun \`openclaw doctor --fix\` after resolving the reported problem.`;
+-        note(warning, "Gateway auth");
+-        recordDoctorHealthWarnings(ctx, [], [warning]);
+-      }
+-      return;
+-    }
+-    note(
+-      `${ctx.options.generateGatewayToken === true ? "Gateway token generation skipped because a SecretRef is configured. " : ""}Doctor will not overwrite gateway.auth.token with a plaintext value.`,
+-      "Gateway auth",
+-    );
+-    return;
+-  }
+-  const shouldSetToken =
+-    ctx.options.generateGatewayToken === true
+-      ? true
+-      : ctx.options.nonInteractive === true
+-        ? false
+-        : await ctx.prompter.confirmAutoFix({
+-            message: "Generate and configure a gateway token now?",
+-            initialValue: true,
+-          });
+-  if (!shouldSetToken) {
+-    return;
+-  }
+-  const { randomToken } = await import("../commands/onboard-helpers.js");
+-  const nextToken = randomToken();
+-  ctx.cfg = {
+-    ...ctx.cfg,
+-    gateway: {
+-      ...ctx.cfg.gateway,
+-      auth: {
+-        ...ctx.cfg.gateway?.auth,
+-        mode: "token",
+-        token: nextToken,
+-      },
+-    },
+-  };
+-  note("Gateway token configured.", "Gateway auth");
+-}
+-
+ async function runLegacyStateHealth(ctx: DoctorHealthFlowContext): Promise<void> {
+-  const { detectLegacyStateMigrations, runLegacyStateMigrations } =
+-    await import("../infra/state-migrations.doctor.js");
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+   // Settle retired-plugin state cleanup (may replace ctx.cfg) before the
+   // legacy-state detect/migrate pair reads the config.
+   await runCoreContributionHealth(ctx, ["core/doctor/removed-workspaces-state"]);
+-  const { prepareLegacySessionSurfaces } = await import("../plugins/legacy-session-surfaces.js");
+-  const legacySessionSurfaces = prepareLegacySessionSurfaces({ config: ctx.cfg });
+   const doctorOnlyStateMigrations = ctx.options.repair === true || ctx.options.yes === true;
+-  const legacyState = await detectLegacyStateMigrations({
+-    cfg: ctx.cfg,
+-    ...(doctorOnlyStateMigrations ? { doctorOnlyStateMigrations: true } : {}),
+-    legacySessionSurfaces,
+-  });
+-  if (legacyState.warnings.length > 0) {
+-    note(legacyState.warnings.join("\n"), "Doctor warnings");
+-  }
+-  if (legacyState.notices.length > 0) {
+-    note(legacyState.notices.join("\n"), "Doctor notices");
+-  }
+-  if (legacyState.preview.length > 0) {
+-    note(legacyState.preview.join("\n"), "Legacy state detected");
+-    const migrate =
+-      ctx.options.nonInteractive === true
+-        ? true
+-        : await ctx.prompter.confirm({
+-            message: "Migrate detected legacy state now?",
+-            initialValue: true,
+-          });
+-    if (migrate) {
+-      const migrated = await runLegacyStateMigrations({
+-        detected: legacyState,
+-        config: ctx.cfg,
+-        ...(doctorOnlyStateMigrations ? { doctorOnlyStateMigrations: true } : {}),
+-        legacySessionSurfaces,
+-      });
+-      recordDoctorHealthWarnings(
+-        ctx,
+-        [],
+-        migrated.stepReceipts.flatMap((receipt) =>
+-          receipt.outcome === "warning" || receipt.outcome === "deferred" ? receipt.warnings : [],
+-        ),
+-      );
+-      if (migrated.changes.length > 0) {
+-        note(migrated.changes.join("\n"), "Doctor changes");
+-      }
+-      const notices = migrated.notices ?? [];
+-      if (notices.length > 0) {
+-        note(notices.join("\n"), "Doctor notices");
+-      }
+-      if (migrated.warnings.length > 0) {
+-        note(migrated.warnings.join("\n"), "Doctor warnings");
++  if (
++    !doctorOnlyStateMigrations ||
++    !isDeepStrictEqual(ctx.configResult.preflightLegacyStateConfig, ctx.cfg)
++  ) {
++    const { detectLegacyStateMigrations, runLegacyStateMigrations } =
++      await import("../infra/state-migrations.doctor.js");
++    const { prepareLegacySessionSurfaces } = await import("../plugins/legacy-session-surfaces.js");
++    const legacySessionSurfaces = prepareLegacySessionSurfaces({ config: ctx.cfg });
++    const legacyState = await detectLegacyStateMigrations({
++      cfg: ctx.cfg,
++      ...(doctorOnlyStateMigrations ? { doctorOnlyStateMigrations: true } : {}),
++      legacySessionSurfaces,
++    });
++    const prior = ctx.configResult.stateMigrationStepReceipts?.find(
++      (receipt) => receipt.id === "migration-detection",
++    );
++    const warnings = legacyState.warnings.filter((warning) => !prior?.warnings.includes(warning));
++    const notices = legacyState.notices.filter((notice) => !prior?.notices?.includes(notice));
++    if (warnings.length > 0) {
++      note(warnings.join("\n"), "Doctor warnings");
++    }
++    if (notices.length > 0) {
++      note(notices.join("\n"), "Doctor notices");
++    }
++    if (legacyState.preview.length > 0) {
++      note(legacyState.preview.join("\n"), "Legacy state detected");
++      const migrate =
++        ctx.options.nonInteractive === true ||
++        (await ctx.prompter.confirm({
++          message: "Migrate detected legacy state now?",
++          initialValue: true,
++        }));
++      if (migrate) {
++        const migrated = await runLegacyStateMigrations({
++          detected: legacyState,
++          config: ctx.cfg,
++          ...(doctorOnlyStateMigrations ? { doctorOnlyStateMigrations: true } : {}),
++          legacySessionSurfaces,
++        });
++        recordDoctorHealthWarnings(
++          ctx,
++          [],
++          migrated.stepReceipts.flatMap((receipt) =>
++            receipt.outcome === "warning" || receipt.outcome === "deferred" ? receipt.warnings : [],
++          ),
++        );
++        if (migrated.changes.length > 0) {
++          note(migrated.changes.join("\n"), "Doctor changes");
++        }
++        if (migrated.notices?.length) {
++          note(migrated.notices.join("\n"), "Doctor notices");
++        }
++        if (migrated.warnings.length > 0) {
++          note(migrated.warnings.join("\n"), "Doctor warnings");
++        }
+       }
+     }
+   }
+@@ -346,7 +197,6 @@ async function runSystemdLingerHealth(ctx: DoctorHealthFlowContext): Promise<voi
+   }
+   const { readGatewayServiceState, resolveGatewayService } = await import("../daemon/service.js");
+   const { ensureSystemdUserLingerInteractive } = await import("../commands/systemd-linger.js");
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+   const service = resolveGatewayService();
+   const state = await readGatewayServiceState(service, { env: process.env });
+   if (state.loadState.status !== "loaded") {
+@@ -414,7 +264,6 @@ async function runShellCompletionHealth(ctx: DoctorHealthFlowContext): Promise<v
+ }
+
+ async function runGatewayHealthChecks(ctx: DoctorHealthFlowContext): Promise<void> {
+-  const { note } = await import("../../packages/terminal-core/src/note.js");
+   const skipReason = ctx.gatewayMaintenanceActive
+     ? "Gateway health will be checked after Doctor repair."
+     : (await hasActiveGatewayExecCredential(ctx)) && ctx.options.allowExec !== true
+@@ -517,7 +366,6 @@ async function runDoctorHealthContributionList(
+     ? contributions.filter((contribution) => contribution.updateWork?.kind === "standalone")
+     : [];
+   if (deferred.length > 0) {
+-    const { note } = await import("../../packages/terminal-core/src/note.js");
+     note(
+       `Omitted during update: ${deferred.map((contribution) => contribution.label).join(", ")}.\nRun \`openclaw doctor\` after the update to inspect these diagnostics.`,
+       "Update Doctor scope",
+@@ -592,7 +440,6 @@ async function runDoctorHealthContributionList(
+         ) {
+           throw error;
+         }
+-        const { note } = await import("../../packages/terminal-core/src/note.js");
+         const message = `${contribution.id} run failed: ${scrubDoctorErrorMessage(error)}`;
+         note(message, "Doctor warnings");
+         recordDoctorHealthWarnings(ctx, [], [message]);
+diff --git a/src/flows/doctor-health-gateway-configuration.ts b/src/flows/doctor-health-gateway-configuration.ts
+new file mode 100644
+index 0000000000..d5007a1251
+--- /dev/null
++++ b/src/flows/doctor-health-gateway-configuration.ts
+@@ -0,0 +1,165 @@
++import { randomUUID } from "node:crypto";
++import fs from "node:fs";
++import { scrubDoctorErrorMessage } from "./doctor-error-message.js";
++import type { DoctorHealthFlowContext } from "./doctor-health-contribution-types.js";
++import { resolveDoctorMode } from "./doctor-health-contribution-utils.js";
++import { recordDoctorHealthWarnings } from "./doctor-health-contribution.js";
++
++export async function runGatewayConfigHealth(ctx: DoctorHealthFlowContext): Promise<void> {
++  const { formatCliCommand } = await import("../cli/command-format.js");
++  const { hasAmbiguousGatewayAuthModeConfig } = await import("../gateway/auth-mode-policy.js");
++  const { note } = await import("../../packages/terminal-core/src/note.js");
++  if (!ctx.cfg.gateway?.mode) {
++    const lines = [
++      "gateway.mode is unset; gateway start will be blocked.",
++      `Fix: run ${formatCliCommand("openclaw configure")} and set Gateway mode (local/remote).`,
++      `Or set directly: ${formatCliCommand("openclaw config set gateway.mode local")}`,
++    ];
++    if (!fs.existsSync(ctx.configPath)) {
++      lines.push(`Missing config: run ${formatCliCommand("openclaw setup")} first.`);
++    }
++    note(lines.join("\n"), "Gateway");
++  }
++  if (resolveDoctorMode(ctx.cfg) === "local" && hasAmbiguousGatewayAuthModeConfig(ctx.cfg)) {
++    note(
++      [
++        "gateway.auth.token and gateway.auth.password are both configured while gateway.auth.mode is unset.",
++        "Set an explicit mode to avoid ambiguous auth selection and startup/runtime failures.",
++        `Set token mode: ${formatCliCommand("openclaw config set gateway.auth.mode token")}`,
++        `Set password mode: ${formatCliCommand("openclaw config set gateway.auth.mode password")}`,
++      ].join("\n"),
++      "Gateway auth",
++    );
++  }
++}
++
++export async function runGatewayAuthHealth(ctx: DoctorHealthFlowContext): Promise<void> {
++  if (!ctx.sourceConfigValid) {
++    return;
++  }
++  const { detectGatewayAuthHealth } = await import("./doctor-gateway-auth.js");
++  const [finding] = await detectGatewayAuthHealth({
++    cfg: ctx.cfg,
++    env: ctx.env,
++    allowExecSecretRefs: ctx.options.allowExec,
++  });
++  const { resolveSecretInputRef } = await import("../config/types.secrets.js");
++  const { note } = await import("../../packages/terminal-core/src/note.js");
++  const gatewayTokenRef = resolveSecretInputRef({
++    value: ctx.cfg.gateway?.auth?.token,
++    defaults: ctx.cfg.secrets?.defaults,
++  }).ref;
++  if (!finding) {
++    if (gatewayTokenRef && ctx.options.generateGatewayToken === true) {
++      note(
++        `Gateway token generation skipped because gateway.auth.token is managed by SecretRef ${gatewayTokenRef.source}:${gatewayTokenRef.provider}:${gatewayTokenRef.id}. The referenced credential was left unchanged.`,
++        "Gateway auth",
++      );
++    }
++    return;
++  }
++  note([finding.message, finding.fixHint].filter(Boolean).join("\n"), "Gateway auth");
++  if (finding.path !== "gateway.auth.token") {
++    recordDoctorHealthWarnings(ctx, [finding]);
++    return;
++  }
++  if (gatewayTokenRef) {
++    if (
++      gatewayTokenRef.source === "store" &&
++      finding.requirement === "SECRET_REF_REDACTED_VALUE" &&
++      (ctx.options.generateGatewayToken === true ||
++        ctx.options.repair === true ||
++        ctx.options.yes === true)
++    ) {
++      const { isRedactedSecretValue } = await import("../config/redact-sentinel.js");
++      const { readSecretStoreValue, writeSecretStoreEntryWithRollback } =
++        await import("../secrets/store/secret-store.js");
++      const { createVerifiedSqliteSnapshot } = await import("../infra/sqlite-snapshot.js");
++      const { resolveOpenClawStateSqlitePath } =
++        await import("../state/openclaw-state-db.paths.js");
++      const { randomToken } = await import("../commands/onboard-helpers.js");
++      const database = { env: ctx.env ?? process.env };
++      const entry = { scope: { kind: "team" as const }, name: gatewayTokenRef.id, database };
++      let rollback: (() => Promise<boolean>) | undefined;
++      try {
++        const current = await readSecretStoreValue(entry);
++        if (!current.ok || !isRedactedSecretValue(current.value)) {
++          note(
++            `Secret store entry "${entry.name}" changed; rerun Doctor to inspect it.`,
++            "Gateway auth",
++          );
++          return;
++        }
++        const databasePath = resolveOpenClawStateSqlitePath(database.env);
++        const backup = await createVerifiedSqliteSnapshot({
++          sourcePath: databasePath,
++          targetPath: `${databasePath}.doctor-gateway-token.${randomUUID()}.bak`,
++          preserveRowIds: true,
++        });
++        const nextToken = randomToken();
++        ({ rollback } = await writeSecretStoreEntryWithRollback({
++          ...entry,
++          value: nextToken,
++          expectedValue: current.value,
++          kind: "secret",
++          updatedBy: "doctor",
++        }));
++        const repaired = await readSecretStoreValue(entry);
++        if (!repaired.ok || repaired.value !== nextToken) {
++          throw new Error("the replacement token could not be verified");
++        }
++        rollback = undefined;
++        note(
++          `Regenerated Gateway token in secret store entry "${entry.name}"; gateway.auth.token remains a SecretRef. Backup: ${backup.path}\nRestart the Gateway, then reconnect or re-pair devices with the new token.`,
++          "Gateway auth",
++        );
++      } catch (error) {
++        let recovery = "";
++        try {
++          if (rollback) {
++            recovery = (await rollback())
++              ? " The previous entry was restored."
++              : " The entry changed again and was left untouched.";
++          }
++        } catch (rollbackError) {
++          recovery = ` Rollback failed: ${scrubDoctorErrorMessage(rollbackError)}.`;
++        }
++        const warning = `Could not repair Gateway token in secret store entry "${entry.name}": ${scrubDoctorErrorMessage(error)}.${recovery} Rerun \`openclaw doctor --fix\` after resolving the reported problem.`;
++        note(warning, "Gateway auth");
++        recordDoctorHealthWarnings(ctx, [], [warning]);
++      }
++      return;
++    }
++    note(
++      `${ctx.options.generateGatewayToken === true ? "Gateway token generation skipped because a SecretRef is configured. " : ""}Doctor will not overwrite gateway.auth.token with a plaintext value.`,
++      "Gateway auth",
++    );
++    return;
++  }
++  const shouldSetToken =
++    ctx.options.generateGatewayToken === true
++      ? true
++      : ctx.options.nonInteractive === true
++        ? false
++        : await ctx.prompter.confirmAutoFix({
++            message: "Generate and configure a gateway token now?",
++            initialValue: true,
++          });
++  if (!shouldSetToken) {
++    return;
++  }
++  const { randomToken } = await import("../commands/onboard-helpers.js");
++  const nextToken = randomToken();
++  ctx.cfg = {
++    ...ctx.cfg,
++    gateway: {
++      ...ctx.cfg.gateway,
++      auth: {
++        ...ctx.cfg.gateway?.auth,
++        mode: "token",
++        token: nextToken,
++      },
++    },
++  };
++  note("Gateway token configured.", "Gateway auth");
++}
 diff --git a/src/infra/sqlite-snapshot-cow.test.ts b/src/infra/sqlite-snapshot-cow.test.ts
-index 6071a5ab..cd93505d 100644
+index 6071a5ab5b..cd93505d1e 100644
 --- a/src/infra/sqlite-snapshot-cow.test.ts
 +++ b/src/infra/sqlite-snapshot-cow.test.ts
 @@ -7,7 +7,8 @@ import { readCloneFileMetadata } from "@openclaw/fs-safe/copy";
@@ -333,7 +1840,7 @@ index 6071a5ab..cd93505d 100644
  const directories = useAutoCleanupTempDirTracker(afterEach);
 diff --git a/src/infra/sqlite-snapshot-prefetch.test.ts b/src/infra/sqlite-snapshot-prefetch.test.ts
 new file mode 100644
-index 00000000..efc34220
+index 0000000000..efc342207c
 --- /dev/null
 +++ b/src/infra/sqlite-snapshot-prefetch.test.ts
 @@ -0,0 +1,130 @@
@@ -469,7 +1976,7 @@ index 00000000..efc34220
 +});
 diff --git a/src/infra/sqlite-snapshot-publication.ts b/src/infra/sqlite-snapshot-publication.ts
 new file mode 100644
-index 00000000..ea7b6dd5
+index 0000000000..ea7b6dd5fe
 --- /dev/null
 +++ b/src/infra/sqlite-snapshot-publication.ts
 @@ -0,0 +1,481 @@
@@ -955,7 +2462,7 @@ index 00000000..ea7b6dd5
 +  }
 +}
 diff --git a/src/infra/sqlite-snapshot.file-id.test.ts b/src/infra/sqlite-snapshot.file-id.test.ts
-index 50613acf..26cd0374 100644
+index 50613acf34..26cd03749d 100644
 --- a/src/infra/sqlite-snapshot.file-id.test.ts
 +++ b/src/infra/sqlite-snapshot.file-id.test.ts
 @@ -7,7 +7,8 @@ import { DatabaseSync } from "node:sqlite";
@@ -969,7 +2476,7 @@ index 50613acf..26cd0374 100644
 
  const directories: string[] = [];
 diff --git a/src/infra/sqlite-snapshot.transfer.test.ts b/src/infra/sqlite-snapshot.transfer.test.ts
-index 4d2e615c..f5089b00 100644
+index 4d2e615c38..f5089b0091 100644
 --- a/src/infra/sqlite-snapshot.transfer.test.ts
 +++ b/src/infra/sqlite-snapshot.transfer.test.ts
 @@ -34,7 +34,8 @@ vi.mock("@openclaw/fs-safe/durability", async (importOriginal) => {
@@ -983,7 +2490,7 @@ index 4d2e615c..f5089b00 100644
  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
  let sqlite: ReturnType<typeof requireNodeSqlite>;
 diff --git a/src/infra/sqlite-snapshot.ts b/src/infra/sqlite-snapshot.ts
-index deb119aa..811e2f2a 100644
+index deb119aa62..811e2f2aec 100644
 --- a/src/infra/sqlite-snapshot.ts
 +++ b/src/infra/sqlite-snapshot.ts
 @@ -1,43 +1,26 @@
@@ -1519,7 +3026,7 @@ index deb119aa..811e2f2a 100644
            readOnly: true,
          });
 diff --git a/src/infra/update-database-backup.test.ts b/src/infra/update-database-backup.test.ts
-index 4eb7b7cf..8f450c45 100644
+index 4eb7b7cf2a..8f450c456c 100644
 --- a/src/infra/update-database-backup.test.ts
 +++ b/src/infra/update-database-backup.test.ts
 @@ -1,5 +1,5 @@
@@ -1633,7 +3140,7 @@ index 4eb7b7cf..8f450c45 100644
    { change: "link", phase: "during" },
    { change: "unlink", phase: "after" },
 diff --git a/src/infra/update-database-backup.ts b/src/infra/update-database-backup.ts
-index 16e3e9bb..a70d8764 100644
+index 16e3e9bb2d..a70d8764e4 100644
 --- a/src/infra/update-database-backup.ts
 +++ b/src/infra/update-database-backup.ts
 @@ -38,7 +38,7 @@ import {
@@ -1658,7 +3165,7 @@ index 16e3e9bb..a70d8764 100644
        warnings.push(
          `Database write generation unavailable for ${file}: ${formatErrorMessageWithCode(error)}`,
 diff --git a/src/infra/update-database-generations.test.ts b/src/infra/update-database-generations.test.ts
-index b31ea20a..3d316a1a 100644
+index b31ea20a7d..3d316a1a77 100644
 --- a/src/infra/update-database-generations.test.ts
 +++ b/src/infra/update-database-generations.test.ts
 @@ -7,7 +7,10 @@ import {
@@ -1820,7 +3327,7 @@ index b31ea20a..3d316a1a 100644
 +  expect(() => reader([missing])).toThrow(/retained journal data/u);
 +});
 diff --git a/src/infra/update-database-generations.ts b/src/infra/update-database-generations.ts
-index a35de99f..0fbad1d1 100644
+index a35de99f9a..0fbad1d196 100644
 --- a/src/infra/update-database-generations.ts
 +++ b/src/infra/update-database-generations.ts
 @@ -5,6 +5,7 @@ import { openNodeSqliteDatabase } from "./node-sqlite.js";
@@ -1938,7 +3445,7 @@ index a35de99f..0fbad1d1 100644
        // Checkpoints preserve iChange and the last committed frame checksum,
        // including TRUNCATE, which resets frame count and salts. Rebuilding the
 diff --git a/src/infra/update-database-restore.ts b/src/infra/update-database-restore.ts
-index 380d59a6..0b751587 100644
+index 380d59a6e6..0b75158795 100644
 --- a/src/infra/update-database-restore.ts
 +++ b/src/infra/update-database-restore.ts
 @@ -22,8 +22,8 @@ import {
@@ -1952,7 +3459,7 @@ index 380d59a6..0b751587 100644
    parseUpdateStateInspectionWorker,
    runUpdateStateInspectionWorker,
 diff --git a/src/infra/update-recovery-baseline-capture.ts b/src/infra/update-recovery-baseline-capture.ts
-index 36cfe324..f62c328d 100644
+index 36cfe3247c..f62c328d37 100644
 --- a/src/infra/update-recovery-baseline-capture.ts
 +++ b/src/infra/update-recovery-baseline-capture.ts
 @@ -35,7 +35,6 @@ import {
@@ -2056,7 +3563,7 @@ index 36cfe324..f62c328d 100644
 -}
 diff --git a/src/infra/update-recovery-doctor-retention.test.ts b/src/infra/update-recovery-doctor-retention.test.ts
 new file mode 100644
-index 00000000..511b4092
+index 0000000000..511b4092c9
 --- /dev/null
 +++ b/src/infra/update-recovery-doctor-retention.test.ts
 @@ -0,0 +1,130 @@
@@ -2192,7 +3699,7 @@ index 00000000..511b4092
 +});
 diff --git a/src/infra/update-recovery-doctor-retention.ts b/src/infra/update-recovery-doctor-retention.ts
 new file mode 100644
-index 00000000..6a858f6a
+index 0000000000..6a858f6af0
 --- /dev/null
 +++ b/src/infra/update-recovery-doctor-retention.ts
 @@ -0,0 +1,132 @@
@@ -2330,7 +3837,7 @@ index 00000000..6a858f6a
 +}
 diff --git a/src/plugins/plugin-generation-artifact.hashing.test.ts b/src/plugins/plugin-generation-artifact.hashing.test.ts
 new file mode 100644
-index 00000000..c0faf08c
+index 0000000000..c0faf08cec
 --- /dev/null
 +++ b/src/plugins/plugin-generation-artifact.hashing.test.ts
 @@ -0,0 +1,159 @@
@@ -2494,7 +4001,7 @@ index 00000000..c0faf08c
 +  }
 +});
 diff --git a/src/plugins/plugin-generation-file-capture.ts b/src/plugins/plugin-generation-file-capture.ts
-index 81a241c6..ba9b4d88 100644
+index 81a241c6d5..ba9b4d8838 100644
 --- a/src/plugins/plugin-generation-file-capture.ts
 +++ b/src/plugins/plugin-generation-file-capture.ts
 @@ -179,7 +179,8 @@ export function createPluginGenerationFileCapture({
@@ -2550,7 +4057,7 @@ index 81a241c6..ba9b4d88 100644
            );
          },
 diff --git a/src/plugins/plugin-generation-receipt.ts b/src/plugins/plugin-generation-receipt.ts
-index 5d2fcffc..68d4c386 100644
+index 5d2fcffc21..68d4c38697 100644
 --- a/src/plugins/plugin-generation-receipt.ts
 +++ b/src/plugins/plugin-generation-receipt.ts
 @@ -72,10 +72,13 @@ export function createPluginGenerationReceipt(prepared?: PluginGenerationReceipt
@@ -2600,7 +4107,7 @@ index 5d2fcffc..68d4c386 100644
        }
 diff --git a/src/plugins/plugin-native-admission-module-graph.test.ts b/src/plugins/plugin-native-admission-module-graph.test.ts
 new file mode 100644
-index 00000000..fe1d31e6
+index 0000000000..fe1d31e670
 --- /dev/null
 +++ b/src/plugins/plugin-native-admission-module-graph.test.ts
 @@ -0,0 +1,58 @@
@@ -2663,7 +4170,7 @@ index 00000000..fe1d31e6
 +  });
 +});
 diff --git a/src/plugins/plugin-native-admission-state.ts b/src/plugins/plugin-native-admission-state.ts
-index 6f583b65..a40f9926 100644
+index 6f583b65ed..a40f9926d8 100644
 --- a/src/plugins/plugin-native-admission-state.ts
 +++ b/src/plugins/plugin-native-admission-state.ts
 @@ -1,5 +1,6 @@
@@ -2696,7 +4203,7 @@ index 6f583b65..a40f9926 100644
  function resolveAdmissionViewKey(
    readOnly = isArtifactPreservingStateRead(),
 diff --git a/src/plugins/plugin-package-metadata-capture.ts b/src/plugins/plugin-package-metadata-capture.ts
-index 6da58805..e06621f0 100644
+index 6da588052e..e06621f03d 100644
 --- a/src/plugins/plugin-package-metadata-capture.ts
 +++ b/src/plugins/plugin-package-metadata-capture.ts
 @@ -11,7 +11,7 @@ import { createSqliteLifecycleAggregateError } from "../infra/sqlite-lifecycle-e
@@ -2719,7 +4226,7 @@ index 6da58805..e06621f0 100644
    let directory: string;
    try {
 diff --git a/src/plugins/plugin-source-capture-directory.test.ts b/src/plugins/plugin-source-capture-directory.test.ts
-index 96fac6ca..b2988bc5 100644
+index 96fac6cac4..b2988bc5dc 100644
 --- a/src/plugins/plugin-source-capture-directory.test.ts
 +++ b/src/plugins/plugin-source-capture-directory.test.ts
 @@ -1,6 +1,7 @@
@@ -2850,7 +4357,7 @@ index 96fac6ca..b2988bc5 100644
    const time = createGatewaySchedulerClock();
    const scheduler = createTestGatewayScheduler(time.clock);
 diff --git a/src/plugins/plugin-source-capture-directory.ts b/src/plugins/plugin-source-capture-directory.ts
-index d39837c3..75dc52b2 100644
+index d39837c37f..75dc52b2ab 100644
 --- a/src/plugins/plugin-source-capture-directory.ts
 +++ b/src/plugins/plugin-source-capture-directory.ts
 @@ -21,6 +21,7 @@ import {
@@ -2893,7 +4400,7 @@ index d39837c3..75dc52b2 100644
      const directory = instance.createDirectory(prefix);
      return {
 diff --git a/src/plugins/plugin-source-capture-recovery.test.ts b/src/plugins/plugin-source-capture-recovery.test.ts
-index 33890df1..c6fcab0e 100644
+index 33890df102..c6fcab0e67 100644
 --- a/src/plugins/plugin-source-capture-recovery.test.ts
 +++ b/src/plugins/plugin-source-capture-recovery.test.ts
 @@ -27,6 +27,7 @@ import {
@@ -2935,7 +4442,7 @@ index 33890df1..c6fcab0e 100644
    vi.spyOn(fs, "chmodSync").mockImplementation((target, mode) => {
      if (typeof target === "string" && path.dirname(target) === path.dirname(first)) {
 diff --git a/src/plugins/plugin-source-file.ts b/src/plugins/plugin-source-file.ts
-index 4cf860d7..f347911a 100644
+index 4cf860d7ee..f347911aaf 100644
 --- a/src/plugins/plugin-source-file.ts
 +++ b/src/plugins/plugin-source-file.ts
 @@ -141,12 +141,10 @@ function copySmallPluginSourceFile(
@@ -2975,7 +4482,7 @@ index 4cf860d7..f347911a 100644
        // fs-safe wraps native failures; retain the disk-full code and detail that
        // plugin-load diagnostics use to explain how to recover.
 diff --git a/src/snapshot/git-backup-codec.ts b/src/snapshot/git-backup-codec.ts
-index 02aa1675..2d577f37 100644
+index 02aa16755b..2d577f37f6 100644
 --- a/src/snapshot/git-backup-codec.ts
 +++ b/src/snapshot/git-backup-codec.ts
 @@ -15,7 +15,7 @@ import {
@@ -2988,7 +4495,7 @@ index 02aa1675..2d577f37 100644
  import { OPENCLAW_AGENT_SCHEMA_SQL } from "../state/openclaw-agent-schema.js";
  import { getOpenClawStateRuntimeSchema } from "../state/openclaw-state-schema-compatibility.js";
 diff --git a/src/snapshot/local-repository.ts b/src/snapshot/local-repository.ts
-index 32065462..4889364b 100644
+index 320654629b..4889364bf2 100644
 --- a/src/snapshot/local-repository.ts
 +++ b/src/snapshot/local-repository.ts
 @@ -33,7 +33,7 @@ import {
@@ -3001,7 +4508,7 @@ index 32065462..4889364b 100644
  import {
    assertDirectory,
 diff --git a/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts b/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
-index c28e4141..146f010b 100644
+index c28e4141d1..146f010ba7 100644
 --- a/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
 +++ b/src/state/openclaw-state-db-readonly.snapshot-admission.test.ts
 @@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
@@ -3152,7 +4659,7 @@ index c28e4141..146f010b 100644
        });
        expect(mocks.capture).not.toHaveBeenCalled();
 diff --git a/src/state/openclaw-state-db-readonly.ts b/src/state/openclaw-state-db-readonly.ts
-index b3f00ad7..9dc44d29 100644
+index b3f00ad782..9dc44d2930 100644
 --- a/src/state/openclaw-state-db-readonly.ts
 +++ b/src/state/openclaw-state-db-readonly.ts
 @@ -5,6 +5,7 @@ import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
@@ -3184,7 +4691,7 @@ index b3f00ad7..9dc44d29 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0..894d3e4b 100644
+index 8e84f7f0d1..894d3e4b50 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
 @@ -11,6 +11,7 @@ function fixture(command: CommandFixture) {
