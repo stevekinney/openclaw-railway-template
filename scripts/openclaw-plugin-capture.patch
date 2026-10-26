@@ -558,6 +558,79 @@ index 0000000000..b1967b2bf3
 +    runWithCurrentPluginMetadata,
 +  };
 +}
+diff --git a/src/commands/doctor-config-flow.gateway-bind-persistence.test.ts b/src/commands/doctor-config-flow.gateway-bind-persistence.test.ts
+index f1183b0e08..96971b35f9 100644
+--- a/src/commands/doctor-config-flow.gateway-bind-persistence.test.ts
++++ b/src/commands/doctor-config-flow.gateway-bind-persistence.test.ts
+@@ -102,6 +102,68 @@ describe("Doctor gateway bind persistence", () => {
+     },
+   );
+
++  it.each(["valid", "missing hash", "missing target"] as const)(
++    "persists an authored include through a directory alias (%s)",
++    async (identity) => {
++      await withTempHome(async (home) => {
++        const directory = path.join(home, "real");
++        const alias = path.join(home, "alias");
++        await fs.mkdir(directory);
++        await fs.symlink(directory, alias, process.platform === "win32" ? "junction" : "dir");
++        const configPath = path.join(alias, "openclaw.json");
++        const original = '{"gateway":{"$include":"gateway.json"}}\n';
++        await fs.writeFile(configPath, original);
++        await fs.writeFile(
++          path.join(directory, "gateway.json"),
++          '{"mode":"local","bind":"localhost"}\n',
++        );
++        await withEnvAsync(
++          { OPENCLAW_CONFIG_PATH: configPath, OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" },
++          async () => {
++            const { snapshot, writeOptions } = await createConfigIO({
++              observe: false,
++            }).readConfigFileSnapshotForWrite();
++            const plan = planLegacyConfigForUpdateChannel(snapshot, writeOptions);
++            expect(plan).toBeDefined();
++            if (!plan) {
++              throw new Error("expected a prepared legacy plan");
++            }
++            if (identity !== "valid") {
++              const includePath = path.join(alias, "gateway.json");
++              if (identity === "missing hash") {
++                delete plan.includeIdentity.includeFileHashesForWrite?.[includePath];
++              } else {
++                delete plan.includeIdentity.includeFileTargetsForWrite?.[includePath];
++              }
++              await expect(
++                repairLegacyConfigForUpdateChannel({
++                  configSnapshot: snapshot,
++                  plan,
++                  jsonMode: true,
++                }),
++              ).rejects.toThrow("Legacy config plan is missing include write identities");
++              expect(await fs.readFile(configPath, "utf8")).toBe(original);
++              expect(
++                JSON.parse(await fs.readFile(path.join(directory, "gateway.json"), "utf8")).bind,
++              ).toBe("localhost");
++              return;
++            }
++            const result = await repairLegacyConfigForUpdateChannel({
++              configSnapshot: snapshot,
++              plan,
++              jsonMode: true,
++            });
++            expect(result.repaired).toBe(true);
++            expect(await fs.readFile(configPath, "utf8")).toBe(original);
++            expect(
++              JSON.parse(await fs.readFile(path.join(directory, "gateway.json"), "utf8")).bind,
++            ).toBe("loopback");
++          },
++        );
++      });
++    },
++  );
++
+   it.each(["unchanged", "root edit", "include edit", "different profile"] as const)(
+     "persists a prepared legacy plan only for its original source: %s",
+     async (scenario) => {
 diff --git a/src/commands/doctor-config-flow.legacy-scan.test.ts b/src/commands/doctor-config-flow.legacy-scan.test.ts
 new file mode 100644
 index 0000000000..33ee0aa666
@@ -1221,6 +1294,23 @@ index b576176e63..93342d2230 100644
 +  }
 +  return configResult;
 +}
+diff --git a/src/commands/doctor/legacy-config-repair.ts b/src/commands/doctor/legacy-config-repair.ts
+index e043fd79ee..50f9f379dc 100644
+--- a/src/commands/doctor/legacy-config-repair.ts
++++ b/src/commands/doctor/legacy-config-repair.ts
+@@ -90,7 +90,11 @@ export async function repairLegacyConfigForUpdateChannel(params: {
+     return { snapshot: params.configSnapshot, repaired: false, ...diagnostics };
+   }
+   if (params.plan && containsAuthoredInclude(plan.snapshot.parsed)) {
+-    const paths = plan.snapshot.includedPaths ?? [];
++    // Watch paths also contain canonical aliases. Write identities belong to
++    // the authored include paths recorded by the resolver, one per input.
++    const paths = (plan.snapshot.includeProvenance ?? []).flatMap(({ targetPath, targetPaths }) =>
++      targetPath !== undefined ? [targetPath] : (targetPaths ?? []),
++    );
+     if (
+       paths.length === 0 ||
+       paths.some(
 diff --git a/src/commands/doctor/shared/config-migration-result.ts b/src/commands/doctor/shared/config-migration-result.ts
 index d6decc9de4..f6ae710ece 100644
 --- a/src/commands/doctor/shared/config-migration-result.ts
