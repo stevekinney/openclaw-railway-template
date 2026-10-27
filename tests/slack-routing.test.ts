@@ -6,15 +6,17 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
+import { verifyCompositionLock, verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
+
+const BUNDLED_PLUGIN_IDS = ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"] as const;
 
 function fixture(run: (root: string, patch: string, release: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "routing-upgrade-test-"));
   try {
-    mkdirSync(join(root, "dist/extensions/slack"), { recursive: true });
-    writeFileSync(join(root, "dist/extensions/slack/package.json"), JSON.stringify({ version: "1.0.0" }));
-    mkdirSync(join(root, "dist/extensions/acpx"), { recursive: true });
-    writeFileSync(join(root, "dist/extensions/acpx/package.json"), JSON.stringify({ version: "1.0.0" }));
+    for (const pluginId of BUNDLED_PLUGIN_IDS) {
+      mkdirSync(join(root, "dist/extensions", pluginId), { recursive: true });
+      writeFileSync(join(root, "dist/extensions", pluginId, "package.json"), JSON.stringify({ version: "1.0.0" }));
+    }
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0", type: "module", dependencies: { zod: "4.6.6" } }));
     mkdirSync(join(root, "node_modules/zod"), { recursive: true });
     writeFileSync(join(root, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "4.6.6" }));
@@ -99,7 +101,7 @@ test("rejects an image that omits ACPX and leaves a retained installation in cha
 test("rejects ACPX built from a different host version", () => {
   fixture((root, patch) => {
     writeFileSync(join(root, "dist/extensions/acpx/package.json"), JSON.stringify({ version: "0.9.0" }));
-    assert.throws(() => verifyRuntimeMetadata(root, patch), /matched ACPX/);
+    assert.throws(() => verifyRuntimeMetadata(root, patch), /matched acpx runtime/i);
   });
 });
 
@@ -125,10 +127,10 @@ for (const [dependency, version, message] of [
 test("replaces companion dependency trees without retaining release-only packages", () => {
   fixture((root) => {
     const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
-    const replacement = dockerfile.match(/    for plugin in slack acpx; do \\\n[\s\S]*?    done;/)?.[0];
+    const replacement = dockerfile.match(/    for plugin in acpx slack lobster firecrawl exa typesafe; do \\\n[\s\S]*?    done;/)?.[0];
     assert(replacement, "The image must install both companion dependency trees.");
     const dependencies = join(root, "production-dependencies");
-    for (const plugin of ["slack", "acpx"]) {
+    for (const plugin of BUNDLED_PLUGIN_IDS) {
       const source = join(dependencies, `${plugin}-production-dependencies`);
       mkdirSync(join(source, "node_modules/current"), { recursive: true });
       writeFileSync(join(source, "node_modules/current/package.json"), "{}");
@@ -137,7 +139,7 @@ test("replaces companion dependency trees without retaining release-only package
       writeFileSync(join(root, `dist/extensions/${plugin}/node_modules/stale/package.json`), "{}");
     }
     execFileSync("sh", ["-eu", "-c", replacement.replaceAll("/tmp/", `${dependencies}/`)], { cwd: root });
-    for (const plugin of ["slack", "acpx"]) {
+    for (const plugin of BUNDLED_PLUGIN_IDS) {
       assert.equal(readFileSync(join(root, `dist/extensions/${plugin}/node_modules/current/package.json`), "utf8"), "{}");
       assert.throws(() => readFileSync(join(root, `dist/extensions/${plugin}/node_modules/stale/package.json`)), /ENOENT/);
     }
@@ -152,9 +154,12 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   assert.match(dockerfile, /check-slack-routing\.ts identity \/app \/tmp\/release-build-info\.json/);
   assert.match(dockerfile, /hooks\.resolve-inbound-route\.test\.ts/);
   assert.match(dockerfile, /vitest\.extension-slack\.config\.ts/);
-  assert.match(dockerfile, /new Set\(\[\.\.\.require\("node:fs"\)\.readdirSync\("\/tmp\/release-extensions"\), "slack", "acpx"\]\)/);
+  assert.match(dockerfile, /new Set\(\[\.\.\.require\("node:fs"\)\.readdirSync\("\/tmp\/release-extensions"\), "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"\]\)/);
   assert.match(dockerfile, /generateNpmPackageLock\(directory, \{ installStrategy: "shallow" \}\)/);
-  assert.match(dockerfile, /for plugin in slack acpx; do/);
+  assert.match(dockerfile, /for plugin in acpx slack lobster firecrawl exa typesafe; do/);
+  assert.match(dockerfile, /preparePackageBundledPlugins\("\/app", plugins/);
+  assert.match(dockerfile, /--lockfile-only.*--offline.*--ignore-scripts.*--no-frozen-lockfile/);
+  assert.match(dockerfile, /--select-bundled-plugin", "acpx"[\s\S]*--select-bundled-plugin", "typesafe"/);
   assert.match(dockerfile, /cp -a "\/tmp\/\$plugin-production-dependencies\/node_modules" "dist\/extensions\/\$plugin\/node_modules"/);
   assert.match(dockerfile, /check-slack-routing\.ts runtime \/app \/etc\/openclaw-slack-routing\.patch/);
 });
@@ -162,14 +167,13 @@ test("pins an immutable patch and retains the upgrade gates", () => {
 
 test("does not accept activation success without executing runtime registration", () => {
   fixture((root) => {
-    for (const plugin of ["slack", "acpx"]) writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};" );
+    for (const plugin of BUNDLED_PLUGIN_IDS) writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};" );
     mkdirSync(join(root, "dist/plugins"), { recursive: true });
     writeFileSync(join(root, "dist/plugins/loader.js"), `
       export async function loadAndActivateRootPluginRegistry() {
         return { plugins: [
           { id: "routing-contract-check", status: "loaded", activated: true },
-          { id: "slack", status: "loaded", activated: true, source: "${join(root, "dist/extensions/slack/index.js")}", version: "1.0.0" },
-          { id: "acpx", status: "loaded", activated: true, source: "${join(root, "dist/extensions/acpx/index.js")}", version: "1.0.0" },
+          ...${JSON.stringify(BUNDLED_PLUGIN_IDS)}.map((id) => ({ id, status: "loaded", activated: true, source: new URL("dist/extensions/" + id + "/index.js", "file://${root}/").pathname, version: "1.0.0" })),
         ] };
       }
     `);
@@ -179,7 +183,7 @@ test("does not accept activation success without executing runtime registration"
 
 test("keeps registration output and writable state outside the plugin source", () => {
   fixture((root) => {
-    for (const plugin of ["slack", "acpx"]) {
+    for (const plugin of BUNDLED_PLUGIN_IDS) {
       writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};");
     }
     mkdirSync(join(root, "dist/plugins"), { recursive: true });
@@ -199,7 +203,7 @@ test("keeps registration output and writable state outside the plugin source", (
       probe.default.register({ registrationMode: 'full', runtime: { channel: { routing: { inboundRouteContractVersion: 1, resolveInboundRoute() {} } } }, on() {}, registerInteractiveHandler() {} });
       assert.deepEqual(fs.readdirSync(source).toSorted(), before, 'Registration output must not change the captured source.');
         const version = JSON.parse(fs.readFileSync(path.join(${JSON.stringify(root)}, 'package.json'), 'utf8')).version;
-        return { plugins: ['slack', 'acpx'].map((id) => ({ id, status: 'loaded', activated: true, version, source: path.join(${JSON.stringify(root)}, 'dist/extensions', id, 'index.js') })).concat({ id: 'routing-contract-check', status: 'loaded', activated: true }) };
+        return { plugins: ${JSON.stringify(BUNDLED_PLUGIN_IDS)}.map((id) => ({ id, status: 'loaded', activated: true, version, source: path.join(${JSON.stringify(root)}, 'dist/extensions', id, 'index.js') })).concat({ id: 'routing-contract-check', status: 'loaded', activated: true }) };
       }
     `);
     verifyRuntimeRegistration(root);
@@ -255,3 +259,46 @@ test("requires source regressions before image verification and stops if they fa
     assert.deepEqual(readFileSync(commands, "utf8").trim().split("\n"), [expected[0]]);
   });
 });
+
+function compositionFixture() {
+  const additions = ["@agentclientprotocol/claude-agent-acp", "@agentclientprotocol/codex-acp", "@clawdbot/lobster", "@slack/bolt", "@slack/types", "@slack/web-api", "acpx", "get-east-asian-width", "smol-toml"];
+  const entry = { specifier: "1.2.3", version: "1.2.3" };
+  const original = {
+    environment: "package-manager-document",
+    application: {
+      lockfileVersion: "9.0", settings: { autoInstallPeers: true }, overrides: { qs: "6.16.0" },
+      packages: Object.fromEntries(additions.map((name) => [name + "@1.2.3", { resolution: { integrity: "sha512-fixture" } }])),
+      snapshots: Object.fromEntries(additions.map((name) => [name + "@1.2.3", {}])),
+      importers: { ".": { dependencies: { kept: entry }, devDependencies: { acpx: entry, tool: entry } }, "extensions/exa": { dependencies: { kept: entry } } },
+    },
+  };
+  const composed = structuredClone(original);
+  Object.assign(composed.application.importers["."].dependencies, Object.fromEntries(additions.map((name) => [name, entry])));
+  delete (composed.application.importers["."].devDependencies as Partial<typeof composed.application.importers["."]["devDependencies"]>).acpx;
+  const manifest = { dependencies: Object.fromEntries(["kept", ...additions].map((name) => [name, "1.2.3"])) };
+  return { original, composed, manifest };
+}
+
+test("composition validates the application document and the expected root additions", () => {
+  const { original, composed, manifest } = compositionFixture();
+  verifyCompositionLock(original, composed, manifest);
+});
+
+for (const mutation of ["environment", "packages", "snapshots", "settings", "overrides", "importer", "unknown application field", "existing root", "unexpected root addition", "development dependency", "new resolution", "manifest version"]) {
+  test(`composition rejects changed ${mutation}`, () => {
+    const { original, composed, manifest } = compositionFixture();
+    if (mutation === "environment") composed.environment = "different manager";
+    if (mutation === "packages") composed.application.packages["acpx@1.2.3"].resolution.integrity = "sha512-substituted";
+    if (mutation === "snapshots") composed.application.snapshots["acpx@1.2.3"] = { dependencies: { injected: "9.9.9" } };
+    if (mutation === "settings") composed.application.settings.autoInstallPeers = false;
+    if (mutation === "overrides") composed.application.overrides.qs = "9.9.9";
+    if (mutation === "importer") Object.assign(composed.application.importers, { "unexpected/importer": {} });
+    if (mutation === "unknown application field") Object.assign(composed.application, { injected: true });
+    if (mutation === "existing root") composed.application.importers["."].dependencies.kept = { specifier: "9.9.9", version: "9.9.9" };
+    if (mutation === "unexpected root addition") Object.assign(composed.application.importers["."].dependencies, { injected: { specifier: "1.2.3", version: "1.2.3" } });
+    if (mutation === "development dependency") composed.application.importers["."].devDependencies.tool = { specifier: "9.9.9", version: "9.9.9" };
+    if (mutation === "new resolution") Object.assign(composed.application.importers["."].dependencies, { acpx: { specifier: "1.2.3", version: "9.9.9" } });
+    if (mutation === "manifest version") manifest.dependencies.acpx = "9.9.9";
+    assert.throws(() => verifyCompositionLock(original, composed, manifest));
+  });
+}

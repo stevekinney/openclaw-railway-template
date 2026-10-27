@@ -1,5 +1,5 @@
 diff --git a/docker-entrypoint.mjs b/docker-entrypoint.mjs
-index 3abe74e9f8..660a6ed828 100644
+index 3abe74e9f8..c4946e7cd6 100644
 --- a/docker-entrypoint.mjs
 +++ b/docker-entrypoint.mjs
 @@ -1,10 +1,14 @@
@@ -321,7 +321,7 @@ index 3abe74e9f8..660a6ed828 100644
 +          }
 +        });
 +      });
-+    for (const pluginId of invocation.selectedPlugins) {
++    if (invocation.selectedPlugins.length) {
 +      const outcome = await runChild([
          ...invocation.rootOptions,
 -        "doctor",
@@ -341,7 +341,7 @@ index 3abe74e9f8..660a6ed828 100644
 -      throw failure;
 +        "plugins",
 +        "install",
-+        pluginId,
++        ...invocation.selectedPlugins,
 +        "--no-enable",
 +      ]);
 +      if (interrupted || outcome.signal || outcome.code !== 0) {
@@ -3669,6 +3669,179 @@ index 34becdead8..4f14828caa 100644
        const { success } = await import("../../gateway/worker-environments/tunnel.test-support.js");
        const { createPluginRecord } = await import("../../plugins/loader-records.js");
        const { markPluginRegistryActive, markPluginRegistryRetired, revokePluginRecord } =
+diff --git a/src/cli/plugins-cli.install-multiple.test.ts b/src/cli/plugins-cli.install-multiple.test.ts
+new file mode 100644
+index 0000000000..c789bd3d8f
+--- /dev/null
++++ b/src/cli/plugins-cli.install-multiple.test.ts
+@@ -0,0 +1,105 @@
++import path from "node:path";
++import { expectDefined } from "@openclaw/normalization-core";
++import { beforeEach, describe, expect, it } from "vitest";
++import { resolveStateDir } from "../config/paths.js";
++import {
++  configWriteMock,
++  installPluginFromNpmSpecMock,
++  readConfigFileSnapshotForWriteMock,
++  resetPluginsCliTestState,
++  restorePersistedInstalledPluginIndexIfCurrentMock,
++  runPluginsCommand,
++  writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock,
++} from "./plugins-cli-test-helpers.js";
++
++function npmSpec(request: unknown): string {
++  if (
++    !request ||
++    typeof request !== "object" ||
++    !("spec" in request) ||
++    typeof request.spec !== "string"
++  ) {
++    throw new Error("Expected an npm installation request");
++  }
++  return request.spec;
++}
++
++describe("plugins install multiple sources", () => {
++  beforeEach(() => {
++    resetPluginsCliTestState();
++    installPluginFromNpmSpecMock.mockImplementation(async (request: unknown) => {
++      const pluginId = npmSpec(request).replace(/^npm:/, "");
++      return {
++        ok: true,
++        pluginId,
++        targetDir: path.join(resolveStateDir(), "extensions", pluginId),
++        version: "1.2.3",
++        npmResolution: { packageName: pluginId, resolvedVersion: "1.2.3" },
++      };
++    });
++  });
++
++  const install = (...sources: string[]) =>
++    runPluginsCommand([
++      "plugins",
++      "install",
++      ...sources,
++      "--force",
++      "--accept-capabilities",
++      "--no-enable",
++    ]);
++
++  it("commits sources in order with fresh configuration and install records", async () => {
++    await install("npm:alpha", "npm:beta");
++
++    expect(installPluginFromNpmSpecMock.mock.calls.map(([request]) => npmSpec(request))).toEqual([
++      "alpha",
++      "beta",
++    ]);
++    // Each source reads once before its lease and again for the persistent apply.
++    expect(readConfigFileSnapshotForWriteMock).toHaveBeenCalledTimes(4);
++    expect(configWriteMock).toHaveBeenCalledTimes(2);
++    const commits = writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock.mock.calls;
++    expect(commits).toHaveLength(2);
++    const firstCommit = expectDefined(commits[0], "first installation commit");
++    const secondCommit = expectDefined(commits[1], "second installation commit");
++    expect(Object.keys(firstCommit[0])).toEqual(["alpha"]);
++    expect(Object.keys(secondCommit[0])).toEqual(["alpha", "beta"]);
++    expect(secondCommit[0]).toMatchObject({
++      alpha: { version: "1.2.3" },
++      beta: { version: "1.2.3" },
++    });
++  });
++
++  it("stops at a failure and preserves an earlier successful commit", async () => {
++    installPluginFromNpmSpecMock.mockResolvedValueOnce({
++      ok: true,
++      pluginId: "alpha",
++      targetDir: path.join(resolveStateDir(), "extensions", "alpha"),
++      version: "1.2.3",
++    });
++    installPluginFromNpmSpecMock.mockResolvedValueOnce({
++      ok: false,
++      error: "plugin blocked by security policy",
++      code: "security_scan_blocked",
++    });
++
++    await expect(install("npm:alpha", "npm:beta", "npm:gamma")).rejects.toThrow("__exit__:1");
++
++    expect(installPluginFromNpmSpecMock.mock.calls.map(([request]) => npmSpec(request))).toEqual([
++      "alpha",
++      "beta",
++    ]);
++    expect(configWriteMock).toHaveBeenCalledTimes(1);
++    expect(
++      expectDefined(
++        writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock.mock.calls[0],
++        "successful installation commit",
++      )[0],
++    ).toMatchObject({
++      alpha: { version: "1.2.3" },
++    });
++    expect(writePersistedInstalledPluginIndexInstallRecordsWithLeaseMock).toHaveBeenCalledTimes(1);
++    expect(restorePersistedInstalledPluginIndexIfCurrentMock).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/cli/plugins-cli.runtime.ts b/src/cli/plugins-cli.runtime.ts
+index 86bbb23c46..f5051fb34b 100644
+--- a/src/cli/plugins-cli.runtime.ts
++++ b/src/cli/plugins-cli.runtime.ts
+@@ -191,15 +191,15 @@ async function runPluginPolicyCommand(
+ }
+
+ export async function runPluginsInstallAction(
+-  raw: string,
++  sources: string[],
+   opts: PluginInstallActionOptions,
+ ): Promise<void> {
+   await tracePluginLifecyclePhaseAsync(
+     "install command",
+     async () => {
+-      const { runPluginInstallCommand } = await import("./plugins-install-command.js");
+-      await runPluginInstallCommand({
+-        raw,
++      const { runPluginInstallCommands } = await import("./plugins-install-command.js");
++      await runPluginInstallCommands({
++        sources,
+         opts,
+         allowInstallPolicyWarningPrompt: true,
+         invalidateRuntimeCache: false,
+diff --git a/src/cli/plugins-cli.ts b/src/cli/plugins-cli.ts
+index eeca2ff706..396a90d1f3 100644
+--- a/src/cli/plugins-cli.ts
++++ b/src/cli/plugins-cli.ts
+@@ -139,10 +139,10 @@ export function registerPluginsCli(program: Command) {
+   plugins
+     .command("install")
+     .description(
+-      "Install a plugin or hook pack (path, archive, npm spec, git repo, clawhub:package, or marketplace entry)",
++      "Install plugins or hook packs in order (paths, archives, npm specs, git repos, clawhub:packages, or marketplace entries)",
+     )
+     .argument(
+-      "<path-or-spec-or-plugin>",
++      "<path-or-spec-or-plugin...>",
+       "Path (.ts/.js/.zip/.tgz/.tar.gz), npm package spec, or marketplace plugin name",
+     )
+     .option("-l, --link", "Link a local path instead of copying", false)
+diff --git a/src/cli/plugins-install-command.ts b/src/cli/plugins-install-command.ts
+index b97c937fe2..b43d2bb831 100644
+--- a/src/cli/plugins-install-command.ts
++++ b/src/cli/plugins-install-command.ts
+@@ -21,6 +21,16 @@ import { resolvePluginLifecycleGateway } from "./plugins-lifecycle-client.js";
+ const DEPRECATED_DANGEROUS_FORCE_UNSAFE_INSTALL_WARNING =
+   "--dangerously-force-unsafe-install is deprecated and no longer affects plugin installs because built-in install-time dangerous-code scanning has been removed. Configure security.installPolicy for operator-owned install decisions.";
+
++/** Install sources in order, keeping each transaction independent and stopping on failure. */
++export async function runPluginInstallCommands(
++  params: Omit<RunPluginInstallCommandParams, "raw"> & { sources: string[] },
++): Promise<void> {
++  const { sources, ...options } = params;
++  for (const raw of sources) {
++    await runPluginInstallCommand({ ...options, raw });
++  }
++}
++
+ /** Validate intent and select the runtime owner before either process acquires its lease. */
+ export async function runPluginInstallCommand(params: RunPluginInstallCommandParams) {
+   assertConfigWriteAllowedInCurrentMode();
 diff --git a/src/commands/doctor-config-flow-preparation.ts b/src/commands/doctor-config-flow-preparation.ts
 new file mode 100644
 index 0000000000..b1967b2bf3
@@ -17987,89 +18160,16 @@ index 33890df102..c6fcab0e67 100644
    vi.spyOn(fs, "chmodSync").mockImplementation((target, mode) => {
      if (typeof target === "string" && path.dirname(target) === path.dirname(first)) {
 diff --git a/src/plugins/plugin-source-file.copy.test.ts b/src/plugins/plugin-source-file.copy.test.ts
-index ed8925bac3..adb18d9ac1 100644
+index ed8925bac3..35d2a78be8 100644
 --- a/src/plugins/plugin-source-file.copy.test.ts
 +++ b/src/plugins/plugin-source-file.copy.test.ts
-@@ -3,7 +3,7 @@ import fs from "node:fs";
- import path from "node:path";
- import * as fsSafe from "@openclaw/fs-safe/advanced";
- import { FsSafeError } from "@openclaw/fs-safe/errors";
--import { afterEach, expect, it, vi } from "vitest";
-+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
- import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
- import { copyPluginSourceFile, pluginSourceStatIdentity } from "./plugin-source-file.js";
-
-@@ -14,6 +14,33 @@ vi.mock("@openclaw/fs-safe/advanced", async (importOriginal) => ({
- const dirs = useAutoCleanupTempDirTracker(afterEach);
- afterEach(() => vi.restoreAllMocks());
-
-+it.each(["linux", "darwin"] as const)(
-+  "uses guarded platform copies for small sources on %s",
-+  (platform) => {
-+    const subject = fixture();
-+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
-+    const admitted = fs.statSync(subject.source, { bigint: true });
-+    const copy = vi.spyOn(fsSafe, "copyRootFileSync");
-+    const copied = subject.copy();
-+    expect(copy).toHaveBeenCalledOnce();
-+    expect(copy).toHaveBeenCalledWith(
-+      expect.objectContaining({
-+        expectedSourceIdentity: { dev: admitted.dev, ino: admitted.ino },
-+        maxBytes: subject.bytes.length,
-+        sourceHardlinks: "allow",
-+        clone: "auto",
-+      }),
-+    );
-+    expect(copied.contentHash).toBe(createHash("sha256").update(subject.bytes).digest("hex"));
-+    expect(copied.sourceIdentity).toBe(pluginSourceStatIdentity(admitted));
-+    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
-+    expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
-+    expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
-+    fs.writeFileSync(subject.source, "edited");
-+    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
-+  },
-+);
-+
- function fixture(bytes = Buffer.from("captured"), basename = "input.js") {
-   const root = fs.realpathSync(dirs.make("plugin-small-copy-"));
-   const source = path.join(root, basename);
-@@ -30,78 +57,40 @@ function fixture(bytes = Buffer.from("captured"), basename = "input.js") {
+@@ -30,6 +30,61 @@ function fixture(bytes = Buffer.from("captured"), basename = "input.js") {
    };
  }
 
--it("copies small files through owned descriptors with the same bytes, identity and mode", () => {
--  const subject = fixture();
--  const admitted = fs.statSync(subject.source, { bigint: true });
--  const clone = vi.spyOn(fsSafe, "copyRootFileSync");
--  const copied = subject.copy();
--  expect(clone).not.toHaveBeenCalled();
--  expect(copied).toEqual({
--    contentHash: createHash("sha256").update(subject.bytes).digest("hex"),
--    sizeBytes: subject.bytes.length,
--    sourceIdentity: pluginSourceStatIdentity(admitted),
--  });
--  expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
--  expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
--  if (process.platform !== "win32") {
--    expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
--  }
--  fs.writeFileSync(subject.source, "edited");
--  expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
--});
--
--it.each(["grow", "shrink", "replace", "symlink"])(
--  "refuses a source that changes after descriptor admission: %s",
 +it.each(["grow", "shrink", "rewrite", "replace", "symlink"])(
 +  "rejects source %s between admission and the guarded copy",
-   (change) => {
--    const subject = fixture();
--    const create = fsSafe.createFileSync;
--    vi.spyOn(fsSafe, "createFileSync").mockImplementation((target, options) => {
--      if (target === subject.target) {
--        if (change === "grow") {
--          fs.appendFileSync(subject.source, "more");
--        } else if (change === "shrink") {
--          fs.truncateSync(subject.source, 1);
++  (change) => {
 +    const subject = fixture(Buffer.alloc(64 * 1024 + 1, "S"));
 +    const copyFile = vi.fn((options: Parameters<typeof fsSafe.copyRootFileSync>[0]) => {
 +      if (change === "grow") {
@@ -18082,199 +18182,51 @@ index ed8925bac3..adb18d9ac1 100644
 +        fs.renameSync(subject.source, `${subject.source}.original`);
 +        if (change === "replace") {
 +          fs.writeFileSync(subject.source, "replacement");
-         } else {
--          fs.renameSync(subject.source, `${subject.source}.original`);
--          if (change === "replace") {
--            fs.writeFileSync(subject.source, "replacement");
--          } else {
--            fs.symlinkSync(`${subject.source}.original`, subject.source);
--          }
++        } else {
 +          fs.symlinkSync(`${subject.source}.original`, subject.source);
-         }
-       }
--      return create(target, options);
++        }
++      }
 +      return fsSafe.copyRootFileSync(options);
-     });
--    expect(subject.copy).toThrow();
--    expect(fs.existsSync(subject.target)).toBe(false);
++    });
 +    expect(() =>
 +      copyPluginSourceFile(subject.source, subject.root, subject.target, { copyFile }),
 +    ).toThrow();
 +    expect(copyFile).toHaveBeenCalledOnce();
-   },
- );
-
--it.each(["grow", "shrink"])("refuses source %s during the bounded transfer", (change) => {
--  const subject = fixture();
--  const write = fs.writeSync;
--  let changed = false;
--  vi.spyOn(fs, "writeSync").mockImplementation((...args) => {
--    if (!changed) {
--      changed = true;
--      if (change === "grow") {
--        fs.appendFileSync(subject.source, "more");
--      } else {
--        fs.truncateSync(subject.source, 1);
--      }
--    }
--    return Reflect.apply(write, fs, args);
--  });
--  expect(subject.copy).toThrow("Plugin source changed");
--  expect(changed).toBe(true);
--});
--
- it.each(["leaf", "parent", "hardlink"])(
--  "refuses substituted destination %s before transfer",
++  },
++);
++
++it.each(["leaf", "parent", "hardlink"])(
 +  "rejects destination %s substitution after guarded copying",
-   (change) => {
--    const subject = fixture();
--    const transfer = fsSafe.copyFileDescriptorSync;
--    vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation((source, target, options) => {
++  (change) => {
 +    const subject = fixture(Buffer.alloc(64 * 1024 + 1, "S"));
 +    const copyFile = (options: Parameters<typeof fsSafe.copyRootFileSync>[0]) => {
 +      const copied = fsSafe.copyRootFileSync(options);
-       if (change === "parent") {
-         fs.renameSync(path.dirname(subject.target), `${path.dirname(subject.target)}.original`);
-         fs.mkdirSync(path.dirname(subject.target));
-@@ -112,25 +101,122 @@ it.each(["leaf", "parent", "hardlink"])(
-       } else {
-         fs.linkSync(subject.target, `${subject.target}.alias`);
-       }
--      return transfer(source, target, options);
--    });
--    expect(subject.copy).toThrow();
++      if (change === "parent") {
++        fs.renameSync(path.dirname(subject.target), `${path.dirname(subject.target)}.original`);
++        fs.mkdirSync(path.dirname(subject.target));
++        fs.writeFileSync(subject.target, "foreign");
++      } else if (change === "leaf") {
++        fs.renameSync(subject.target, `${subject.target}.original`);
++        fs.writeFileSync(subject.target, "foreign");
++      } else {
++        fs.linkSync(subject.target, `${subject.target}.alias`);
++      }
 +      return copied;
 +    };
 +    expect(() =>
 +      copyPluginSourceFile(subject.source, subject.root, subject.target, { copyFile }),
 +    ).toThrow();
-     if (change !== "hardlink") {
-       expect(fs.readFileSync(subject.target, "utf8")).toBe("foreign");
-     }
-   },
- );
-
--it("preserves disk-full diagnostics and does not retry descriptor transfer", () => {
--  const subject = fixture();
--  const cause = Object.assign(new Error("capture filesystem is full"), { code: "ENOSPC" });
--  const failure = new FsSafeError("helper-failed", "descriptor copy failed", { cause });
--  const transfer = vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation(() => {
--    throw failure;
-+describe("Windows descriptor copies", () => {
-+  beforeEach(() => vi.spyOn(process, "platform", "get").mockReturnValue("win32"));
-+
-+  it("copies small files through owned descriptors with the same bytes, identity and mode", () => {
-+    const subject = fixture();
-+    const admitted = fs.statSync(subject.source, { bigint: true });
-+    const clone = vi.spyOn(fsSafe, "copyRootFileSync");
-+    const copied = subject.copy();
-+    expect(clone).not.toHaveBeenCalled();
-+    expect(copied).toEqual({
-+      contentHash: createHash("sha256").update(subject.bytes).digest("hex"),
-+      sizeBytes: subject.bytes.length,
-+      sourceIdentity: pluginSourceStatIdentity(admitted),
-+    });
-+    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
-+    expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
-+    if (process.platform !== "win32") {
-+      expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
++    if (change !== "hardlink") {
++      expect(fs.readFileSync(subject.target, "utf8")).toBe("foreign");
 +    }
-+    fs.writeFileSync(subject.source, "edited");
-+    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
-+  });
++  },
++);
 +
-+  it.each(["grow", "shrink", "replace", "symlink"])(
-+    "refuses a source that changes after descriptor admission: %s",
-+    (change) => {
-+      const subject = fixture();
-+      const create = fsSafe.createFileSync;
-+      vi.spyOn(fsSafe, "createFileSync").mockImplementation((target, options) => {
-+        if (target === subject.target) {
-+          if (change === "grow") {
-+            fs.appendFileSync(subject.source, "more");
-+          } else if (change === "shrink") {
-+            fs.truncateSync(subject.source, 1);
-+          } else {
-+            fs.renameSync(subject.source, `${subject.source}.original`);
-+            if (change === "replace") {
-+              fs.writeFileSync(subject.source, "replacement");
-+            } else {
-+              fs.symlinkSync(`${subject.source}.original`, subject.source);
-+            }
-+          }
-+        }
-+        return create(target, options);
-+      });
-+      expect(subject.copy).toThrow();
-+      expect(fs.existsSync(subject.target)).toBe(false);
-+    },
-+  );
-+
-+  it.each(["grow", "shrink"])("refuses source %s during the bounded transfer", (change) => {
-+    const subject = fixture();
-+    const write = fs.writeSync;
-+    let changed = false;
-+    vi.spyOn(fs, "writeSync").mockImplementation((...args) => {
-+      if (!changed) {
-+        changed = true;
-+        if (change === "grow") {
-+          fs.appendFileSync(subject.source, "more");
-+        } else {
-+          fs.truncateSync(subject.source, 1);
-+        }
-+      }
-+      return Reflect.apply(write, fs, args);
-+    });
-+    expect(subject.copy).toThrow("Plugin source changed");
-+    expect(changed).toBe(true);
-+  });
-+
-+  it.each(["leaf", "parent", "hardlink"])(
-+    "refuses substituted destination %s before transfer",
-+    (change) => {
-+      const subject = fixture();
-+      const transfer = fsSafe.copyFileDescriptorSync;
-+      vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation((source, target, options) => {
-+        if (change === "parent") {
-+          fs.renameSync(path.dirname(subject.target), `${path.dirname(subject.target)}.original`);
-+          fs.mkdirSync(path.dirname(subject.target));
-+          fs.writeFileSync(subject.target, "foreign");
-+        } else if (change === "leaf") {
-+          fs.renameSync(subject.target, `${subject.target}.original`);
-+          fs.writeFileSync(subject.target, "foreign");
-+        } else {
-+          fs.linkSync(subject.target, `${subject.target}.alias`);
-+        }
-+        return transfer(source, target, options);
-+      });
-+      expect(subject.copy).toThrow();
-+      if (change !== "hardlink") {
-+        expect(fs.readFileSync(subject.target, "utf8")).toBe("foreign");
-+      }
-+    },
-+  );
-+
-+  it("preserves disk-full diagnostics and does not retry descriptor transfer", () => {
-+    const subject = fixture();
-+    const cause = Object.assign(new Error("capture filesystem is full"), { code: "ENOSPC" });
-+    const failure = new FsSafeError("helper-failed", "descriptor copy failed", { cause });
-+    const transfer = vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation(() => {
-+      throw failure;
-+    });
-+    expect(subject.copy).toThrow("capture filesystem is full");
-+    expect(transfer).toHaveBeenCalledOnce();
-+    // A failed acquisition is not retried over the partially created output.
-+    expect(subject.copy).toThrow(expect.objectContaining({ code: "already-exists" }));
-+    expect(transfer).toHaveBeenCalledOnce();
-   });
--  expect(subject.copy).toThrow("capture filesystem is full");
--  expect(transfer).toHaveBeenCalledOnce();
--  // A failed acquisition is not retried over the partially created output.
--  expect(subject.copy).toThrow(expect.objectContaining({ code: "already-exists" }));
--  expect(transfer).toHaveBeenCalledOnce();
- });
+ it("copies small files through owned descriptors with the same bytes, identity and mode", () => {
+   const subject = fixture();
+   const admitted = fs.statSync(subject.source, { bigint: true });
 diff --git a/src/plugins/plugin-source-file.ts b/src/plugins/plugin-source-file.ts
-index 4cf860d7ee..ff4273acdf 100644
+index 4cf860d7ee..e6bfaed749 100644
 --- a/src/plugins/plugin-source-file.ts
 +++ b/src/plugins/plugin-source-file.ts
 @@ -141,12 +141,10 @@ function copySmallPluginSourceFile(
@@ -18294,15 +18246,7 @@ index 4cf860d7ee..ff4273acdf 100644
  }
 
  export function copyPluginSourceFile(
-@@ -168,6 +166,7 @@ export function copyPluginSourceFile(
-       // Windows needs this path most: fs-safe skips native copies and path-admission
-       // caching on win32, so guarded clones of every small file stall Gateway startup.
-       if (
-+        process.platform === "win32" &&
-         admitted.size <= BigInt(SMALL_SOURCE_COPY_BYTES) &&
-         !/\.(?:node|so|dylib|dll)$/iu.test(source) &&
-         !isPluginNativeDescriptor(fd) &&
-@@ -193,13 +192,35 @@ export function copyPluginSourceFile(
+@@ -193,13 +191,35 @@ export function copyPluginSourceFile(
          mode,
          sourceHardlinks: "allow",
        });
@@ -18804,7 +18748,7 @@ index b3f00ad782..9dc44d2930 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0d1..e6caa290cd 100644
+index 8e84f7f0d1..a373fe2fd6 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
 @@ -11,12 +11,24 @@ function fixture(command: CommandFixture) {
@@ -18851,7 +18795,7 @@ index 8e84f7f0d1..e6caa290cd 100644
    const record = path.join(root, "calls.jsonl");
    const runCommand = (argv: string[], env: Record<string, string> = {}) =>
      command.run(process.execPath, [path.join(root, "docker-entrypoint.mjs"), ...argv], {
-@@ -54,10 +66,318 @@ if (args.includes('doctor')) {
+@@ -54,10 +66,317 @@ if (args.includes('doctor')) {
      runCommand,
      run: (args: string[], env: Record<string, string> = {}) =>
        runCommand([process.execPath, ...args], env),
@@ -18975,8 +18919,7 @@ index 8e84f7f0d1..e6caa290cd 100644
 +    ]);
 +    expect(result.status, result.stderr).toBe(0);
 +    expect(f.read().map((row) => row.args)).toEqual([
-+      ["plugins", "install", "alpha", "--no-enable"],
-+      ["plugins", "install", "beta", "--no-enable"],
++      ["plugins", "install", "alpha", "beta", "--no-enable"],
 +      ["doctor", "--fix", "--non-interactive"],
 +      ["gateway"],
 +    ]);
@@ -19038,10 +18981,10 @@ index 8e84f7f0d1..e6caa290cd 100644
 +      expect(
 +        f
 +          .read()
-+          .slice(-selection.length - 2)
++          .slice(-3)
 +          .map((row) => row.args),
 +      ).toEqual([
-+        ...selection.map((id) => ["plugins", "install", id, "--no-enable"]),
++        ["plugins", "install", ...selection, "--no-enable"],
 +        ["doctor", "--fix", "--non-interactive"],
 +        ["gateway"],
 +      ]);
@@ -19158,7 +19101,7 @@ index 8e84f7f0d1..e6caa290cd 100644
 +    expect(result.status).toBe(143);
 +    expect(f.read()).toEqual([
 +      {
-+        args: ["plugins", "install", "alpha", "--no-enable"],
++        args: ["plugins", "install", "alpha", "beta", "--no-enable"],
 +        pid: expect.any(Number),
 +        parentPid: expect.any(Number),
 +      },
@@ -19170,7 +19113,7 @@ index 8e84f7f0d1..e6caa290cd 100644
    it.for([
      { args: ["openclaw.mjs", "gateway"], rootOptions: [] },
      { args: ["openclaw", "gateway"], rootOptions: [], installed: true },
-@@ -70,6 +390,7 @@ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
+@@ -70,6 +389,7 @@ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
      { args: ["openclaw.mjs", "--dev", "gateway"], rootOptions: ["--dev"] },
      { args: ["openclaw.mjs", "gateway", "--dev"], rootOptions: [] },
      { args: ["openclaw.mjs", "gateway", "--token", "--reset"], rootOptions: [] },
@@ -19178,6 +19121,18 @@ index 8e84f7f0d1..e6caa290cd 100644
    ])(
      "settles Doctor then execs the original command: $args",
      async ({ args, rootOptions, installed }, { command }) => {
+diff --git a/test/vitest/vitest.cli-process-paths.mjs b/test/vitest/vitest.cli-process-paths.mjs
+index 2287751466..22baa0ce1d 100644
+--- a/test/vitest/vitest.cli-process-paths.mjs
++++ b/test/vitest/vitest.cli-process-paths.mjs
+@@ -14,6 +14,7 @@ export const cliProcessTestFiles = [
+   "src/cli/update-cli/update-command-runtime-preview.test.ts",
+   "src/cli/update-cli/update-command-plugins.persistence.test.ts",
+   "src/cli/plugins-cli.install.test.ts",
++  "src/cli/plugins-cli.install-multiple.test.ts",
+   "src/cli/acp-cli-exit.process.test.ts",
+   "src/cli/agent-session-affinity.process.test.ts",
+   "src/cli/capability-local-audio-path.process.test.ts",
 diff --git a/ui/package.json b/ui/package.json
 index 25a98d9a07..d84b8676d8 100644
 --- a/ui/package.json
