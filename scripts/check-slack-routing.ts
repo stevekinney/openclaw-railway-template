@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 function readObject(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -52,6 +53,7 @@ export function verifyRuntimeRegistration(root: string): void {
       import assert from 'node:assert/strict';
       import { writeFileSync } from 'node:fs';
       export default { id: 'routing-contract-check', register(api) {
+        assert.equal(api.registrationMode, 'full');
         assert.equal(api.runtime.channel.routing.inboundRouteContractVersion, 1);
         assert.equal(typeof api.runtime.channel.routing.resolveInboundRoute, 'function');
         assert.equal(typeof api.registerInteractiveHandler, 'function');
@@ -96,27 +98,49 @@ export function verifyRuntimeRegistration(root: string): void {
       assert.throws(() => net.connect({host: 'example.invalid', port: 443}), /Network access/);
       assert.throws(() => dns.lookup('example.invalid', () => {}), /Network access/);
     `], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
+    const probe = join(directory, "full-registration.mjs");
+    writeFileSync(probe, `
+      import { readFileSync } from 'node:fs';
+      import { loadAndActivateRootPluginRegistry } from ${JSON.stringify(pathToFileURL(join(root, "dist/plugins/loader.js")).href)};
+      const registry = await loadAndActivateRootPluginRegistry({ cache: false, config: JSON.parse(readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8')) });
+      const selected = (registry.plugins ?? []).filter((plugin) => ['routing-contract-check', 'slack', 'acpx'].includes(plugin.id));
+      process.stdout.write('OPENCLAW_ROUTING_FULL_REGISTRATION=' + JSON.stringify(selected.map(({ id, status, activated, source, version }) => ({ id, status, activated, source, version }))));
+    `);
+    const output = execFileSync(process.execPath, [probe], {
+      cwd: root,
+      encoding: "utf8",
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const marker = "OPENCLAW_ROUTING_FULL_REGISTRATION=";
+    const markerPosition = output.lastIndexOf(marker);
+    assert(markerPosition >= 0, "The full registration probe did not return its result marker.");
+    const registration: unknown = JSON.parse(output.slice(markerPosition + marker.length));
+    assert(Array.isArray(registration), "The full registration probe did not return plugin records.");
+    type RegistrationRecord = {
+      id: string;
+      status?: unknown;
+      activated?: unknown;
+      source?: unknown;
+      version?: unknown;
+    };
+    const records: unknown[] = registration;
     for (const pluginId of ["routing-contract-check", "slack", "acpx"]) {
-      const output = execFileSync(process.execPath, [join(root, "openclaw.mjs"), "plugins", "info", pluginId, "--runtime", "--json"], {
-        cwd: root,
-        encoding: "utf8",
-        env: environment,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const report: unknown = JSON.parse(output.slice(output.indexOf("{")));
-      assert(report && typeof report === "object" && "plugin" in report);
-      const plugin = report.plugin;
-      assert(plugin && typeof plugin === "object" && "status" in plugin);
-      assert.equal(plugin.status, "loaded", "Routing probe did not load in the real host.");
-      assert.equal(readObject(receipt).contractVersion, 1, "Runtime registration was not executed.");
+      const plugin = records.find((candidate): candidate is RegistrationRecord =>
+        candidate !== null && typeof candidate === "object" && "id" in candidate &&
+        typeof candidate.id === "string" && candidate.id === pluginId,
+      );
+      assert(plugin, `The full registration probe did not return ${pluginId}.`);
+      assert.equal(plugin.status, "loaded", `${pluginId} failed full runtime registration.`);
+      assert(plugin.activated === true, `${pluginId} was inspected but not activated.`);
       if (pluginId === "slack" || pluginId === "acpx") {
         const bundledRoot = pluginId === "slack" ? bundledSlack : bundledAcpx;
         assert("source" in plugin && typeof plugin.source === "string");
         assert(realpathSync(plugin.source).startsWith(realpathSync(bundledRoot) + sep), `${pluginId} must load from the rebuilt image, not a retained archive.`);
-        assert("version" in plugin);
         assert.equal(plugin.version, readObject(join(root, "package.json")).version);
       }
     }
+    assert.equal(readObject(receipt).contractVersion, 1, "Runtime registration was not executed.");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

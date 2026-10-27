@@ -15,7 +15,7 @@ function fixture(run: (root: string, patch: string, release: string) => void): v
     writeFileSync(join(root, "dist/extensions/slack/package.json"), JSON.stringify({ version: "1.0.0" }));
     mkdirSync(join(root, "dist/extensions/acpx"), { recursive: true });
     writeFileSync(join(root, "dist/extensions/acpx/package.json"), JSON.stringify({ version: "1.0.0" }));
-    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0", dependencies: { zod: "4.6.6" } }));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0", type: "module", dependencies: { zod: "4.6.6" } }));
     mkdirSync(join(root, "node_modules/zod"), { recursive: true });
     writeFileSync(join(root, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "4.6.6" }));
     for (const [name, version] of [["undici", "8.12.3"], ["express", "5.2.1"], ["express/node_modules/body-parser", "2.4.0"]]) {
@@ -160,9 +160,19 @@ test("pins an immutable patch and retains the upgrade gates", () => {
 });
 
 
-test("does not accept a CLI success without executing runtime registration", () => {
+test("does not accept activation success without executing runtime registration", () => {
   fixture((root) => {
-    writeFileSync(join(root, "openclaw.mjs"), 'console.log(JSON.stringify({plugin: {status: "loaded"}}));');
+    for (const plugin of ["slack", "acpx"]) writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};" );
+    mkdirSync(join(root, "dist/plugins"), { recursive: true });
+    writeFileSync(join(root, "dist/plugins/loader.js"), `
+      export async function loadAndActivateRootPluginRegistry() {
+        return { plugins: [
+          { id: "routing-contract-check", status: "loaded", activated: true },
+          { id: "slack", status: "loaded", activated: true, source: "${join(root, "dist/extensions/slack/index.js")}", version: "1.0.0" },
+          { id: "acpx", status: "loaded", activated: true, source: "${join(root, "dist/extensions/acpx/index.js")}", version: "1.0.0" },
+        ] };
+      }
+    `);
     assert.throws(() => verifyRuntimeRegistration(root), /registration.json/);
   });
 });
@@ -172,22 +182,25 @@ test("keeps registration output and writable state outside the plugin source", (
     for (const plugin of ["slack", "acpx"]) {
       writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};");
     }
-    writeFileSync(join(root, "openclaw.mjs"), `
+    mkdirSync(join(root, "dist/plugins"), { recursive: true });
+    writeFileSync(join(root, "dist/plugins/loader.js"), `
       import assert from 'node:assert/strict';
       import fs from 'node:fs';
       import path from 'node:path';
       import { pathToFileURL } from 'node:url';
-      const configuration = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
+      export async function loadAndActivateRootPluginRegistry() {
+        const configuration = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
       const source = configuration.plugins.load.paths[0];
       for (const writablePath of [process.env.OPENCLAW_STATE_DIR, process.env.OPENCLAW_CONFIG_PATH]) {
         assert(!path.resolve(writablePath).startsWith(path.resolve(source) + path.sep), 'Writable state must not be captured as plugin source.');
       }
       const before = fs.readdirSync(source).toSorted();
       const probe = await import(pathToFileURL(path.join(source, 'index.mjs')));
-      probe.default.register({ runtime: { channel: { routing: { inboundRouteContractVersion: 1, resolveInboundRoute() {} } } }, on() {}, registerInteractiveHandler() {} });
+      probe.default.register({ registrationMode: 'full', runtime: { channel: { routing: { inboundRouteContractVersion: 1, resolveInboundRoute() {} } } }, on() {}, registerInteractiveHandler() {} });
       assert.deepEqual(fs.readdirSync(source).toSorted(), before, 'Registration output must not change the captured source.');
-      const pluginId = process.argv[4];
-      console.log(JSON.stringify({ plugin: { status: 'loaded', version: JSON.parse(fs.readFileSync(path.join(${JSON.stringify(root)}, 'package.json'), 'utf8')).version, source: path.join(${JSON.stringify(root)}, 'dist/extensions', pluginId, 'index.js') } }));
+        const version = JSON.parse(fs.readFileSync(path.join(${JSON.stringify(root)}, 'package.json'), 'utf8')).version;
+        return { plugins: ['slack', 'acpx'].map((id) => ({ id, status: 'loaded', activated: true, version, source: path.join(${JSON.stringify(root)}, 'dist/extensions', id, 'index.js') })).concat({ id: 'routing-contract-check', status: 'loaded', activated: true }) };
+      }
     `);
     verifyRuntimeRegistration(root);
   });
