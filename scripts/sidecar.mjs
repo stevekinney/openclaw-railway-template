@@ -48,7 +48,13 @@ tailscaled?.on("exit", (code, signal) => {
 });
 
 createServer(async (request, response) => {
-  const path = new URL(request.url, "http://relay").pathname;
+  let path;
+  try {
+    path = new URL(request.url, "http://relay").pathname;
+  } catch {
+    response.writeHead(400).end("invalid request target\n");
+    return;
+  }
   if (!probePaths.has(path) || !["GET", "HEAD"].includes(request.method)) {
     if (webhooks) await webhooks(request, response);
     else response.writeHead(404).end();

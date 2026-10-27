@@ -11,7 +11,7 @@
     "typecheck": "tsc --project tsconfig.json",
     "test:railway-config": "node --test tests/railway-config.test.ts tests/railway-template.test.ts",
     "test:image": "sh tests/image.test.sh",
-    "test:scripts": "node --test tests/tailscale-hostname.test.ts tests/slack-routing.test.ts tests/entrypoint-ownership.test.ts tests/runtime-workers.test.ts"
+    "test:scripts": "node --test tests/tailscale-hostname.test.ts tests/slack-routing.test.ts tests/entrypoint-ownership.test.ts tests/runtime-workers.test.ts tests/sidecar-security.test.ts tests/webhook-security.test.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

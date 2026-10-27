@@ -23,7 +23,7 @@ jobs:
         run: npm run typecheck
       - name: Evaluate Railway configuration
         run: npm run test:railway-config
-      - name: Test the machine-name rule
+      - name: Test scripts and request handling
         run: npm run test:scripts
       - name: Validate JSON configuration
         run: jq empty config/openclaw.seed.json
@@ -31,8 +31,8 @@ jobs:
         run: node --check scripts/sidecar.mjs && node --check scripts/webhook-relay.mjs && node --check scripts/tailscale-hostname.mjs
       - name: ShellCheck
         run: |
-          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 \
-            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh scripts/gog-login.sh tests/image.test.sh
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 --external-sources \
+            scripts/entrypoint.sh scripts/openclaw-as-node.sh scripts/as-node.sh scripts/brew-as-node.sh scripts/gog-login.sh tests/image.test.sh tests/startup-security.test.sh tests/webhook-image.test.sh tests/image-admission.test.sh
       - name: Hadolint
         run: |
           docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
