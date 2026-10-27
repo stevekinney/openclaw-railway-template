@@ -114,7 +114,7 @@ export function verifyCompositionLock(
   assert.deepStrictEqual(composedRoot.devDependencies ?? {}, originalDevelopment, "Composition changed development dependencies");
 }
 
-async function composeSourceLockfile(root: string): Promise<void> {
+export async function composeSourceLockfile(root: string): Promise<void> {
   const requireSource = createRequire(join(root, "package.json"));
   const { parse, stringify } = requireSource("yaml") as { parse(source: string): unknown; stringify(value: unknown): string };
   const { pnpmLockfileDocuments } = await import(pathToFileURL(join(root, "scripts/lib/pnpm-lockfile-documents.mjs")).href);
@@ -324,10 +324,9 @@ export function verifyRuntimeRegistration(root: string): void {
 
 if (import.meta.main) {
   const [mode, root, input] = process.argv.slice(2);
-  const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, dependencies ROOT, or compose-lockfile ROOT";
+  const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, or dependencies ROOT";
   assert(root, usage);
   if (mode === "dependencies") verifyInstalledDependencies(root);
-  else if (mode === "compose-lockfile") await composeSourceLockfile(root);
   else if (mode === "identity") {
     assert(input, usage);
     verifySourceIdentity(root, input, process.env.GIT_COMMIT ?? "");

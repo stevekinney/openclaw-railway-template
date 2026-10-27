@@ -192,7 +192,7 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   assert.match(dockerfile, /new Set\(\[\.\.\.require\("node:fs"\)\.readdirSync\("\/tmp\/release-extensions"\), "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"\]\)/);
   assert.match(dockerfile, /generateNpmPackageLock\(directory, \{ installStrategy: "shallow" \}\)/);
   assert.match(dockerfile, /for plugin in acpx slack lobster firecrawl exa typesafe; do/);
-  assert.match(dockerfile, /check-slack-routing\.ts compose-lockfile \/app/);
+  assert.match(dockerfile, /composeSourceLockfile\("\/app"\)/);
   assert.match(readFileSync(new URL("../scripts/check-slack-routing.ts", import.meta.url), "utf8"), /preparePackageBundledPlugins\(root, plugins/);
   assert.doesNotMatch(dockerfile, /pnpm install --lockfile-only/);
   assert.match(dockerfile, /--select-bundled-plugin", "acpx"[\s\S]*--select-bundled-plugin", "typesafe"/);

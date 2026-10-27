@@ -56,7 +56,7 @@ RUN set -eu; \
 # Compose the six hosted plugins into the root package before the production
 # install. The canonical helper owns manifest/inventory cleanup; only its
 # validated composition and the lockfile importer additions are retained.
-RUN node --import ./scripts/tsx.mjs /tmp/check-slack-routing.ts compose-lockfile /app
+RUN node --import ./scripts/tsx.mjs --input-type=module -e 'import { composeSourceLockfile } from "/tmp/check-slack-routing.ts"; await composeSourceLockfile("/app");'
 
 # Install production dependencies from the patched source lockfile, including
 # its security fixes; the released image's node_modules belong to the old lock.
