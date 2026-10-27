@@ -47,6 +47,14 @@ test("openclaw runs one volume-backed, health-checked Gateway", () => {
   const openclaw = findService("openclaw");
   assert.equal(openclaw.build?.dockerfilePath, "Dockerfile");
   assert.equal(instanceCount(openclaw), 1);
+  const startCommand = String(openclaw.deploy?.startCommand ?? "");
+  assert.match(startCommand, /^openclaw-railway-entrypoint tini -s -- node \/app\/docker-entrypoint\.mjs node \/app\/openclaw\.mjs /);
+  assert.deepEqual(
+    [...startCommand.matchAll(/--select-bundled-plugin ([a-z-]+)/g)].map((match) => match[1]),
+    ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"],
+    "The service command must preserve the image's complete bundled-plugin selection.",
+  );
+  assert.match(startCommand, / gateway --bind loopback --tailscale serve --auth token$/);
   assert.equal(openclaw.deploy?.requiredMountPath, "/data");
   assert.equal(openclaw.deploy?.healthcheckPath, "/startupz");
   assert.equal(openclaw.deploy?.healthcheckTimeout, 600, "startup performance must fit the existing window");
@@ -62,10 +70,28 @@ test("volumes declare region and size, and services run in the same region", () 
     const config = volume?.config as { region?: string; sizeMB?: number } | undefined;
     assert.ok(config?.region, `${name} declares a region`);
     assert.ok(config?.sizeMB, `${name} declares a size`);
+    assert.equal(config?.sizeMB, 5000, `${name} keeps the template's new-install default`);
     for (const serviceName of ["openclaw"]) {
       const regions = Object.keys((findService(serviceName).deploy?.multiRegionConfig ?? {}) as object);
       assert.deepEqual(regions, [config.region], `${serviceName} runs in the volume region`);
     }
+  }
+});
+
+test("existing projects can preserve an enlarged volume during config apply", async () => {
+  const previousSize = process.env.OPENCLAW_RAILWAY_VOLUME_SIZE_MB;
+  process.env.OPENCLAW_RAILWAY_VOLUME_SIZE_MB = "20000";
+  try {
+    const configurationFile = new URL("../.railway/railway.ts", import.meta.url).href;
+    const { default: configuredProgram } = await import(`${configurationFile}?existing-volume-size`);
+    const configured = await configuredProgram(createRailwayContext({ environment: "production" }), project);
+    const volume = (JSON.parse(JSON.stringify(configured)).resources as Resource[]).find(
+      (resource) => resource.type === "volume" && resource.name === "openclaw-state",
+    );
+    assert.equal((volume?.config as { sizeMB?: number } | undefined)?.sizeMB, 20000);
+  } finally {
+    if (previousSize === undefined) delete process.env.OPENCLAW_RAILWAY_VOLUME_SIZE_MB;
+    else process.env.OPENCLAW_RAILWAY_VOLUME_SIZE_MB = previousSize;
   }
 });
 
@@ -97,7 +123,10 @@ test("no service is exposed publicly", () => {
 
 test("secrets come from Railway and are never written in the file", () => {
   assert.deepEqual(findService("openclaw").variables?.OPENCLAW_GATEWAY_TOKEN, { type: "preserve" });
+  assert.deepEqual(findService("openclaw").variables?.OPENCLAW_GATEWAY_STARTUP_TRACE, { type: "preserve" });
+  assert.deepEqual(findService("openclaw").variables?.OPENCLAW_PLUGIN_LIFECYCLE_TRACE, { type: "preserve" });
   assert.deepEqual(findService("openclaw").variables?.TS_AUTHKEY, { type: "preserve" });
+  assert.deepEqual(findService("openclaw").variables?.TS_HOSTNAME, { type: "preserve" });
 });
 
 // Railway's builder accepts cache mounts only; ordinary Docker also accepts bind mounts.
