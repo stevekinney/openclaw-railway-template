@@ -17986,8 +17986,295 @@ index 33890df102..c6fcab0e67 100644
    const chmod = fs.chmodSync.bind(fs);
    vi.spyOn(fs, "chmodSync").mockImplementation((target, mode) => {
      if (typeof target === "string" && path.dirname(target) === path.dirname(first)) {
+diff --git a/src/plugins/plugin-source-file.copy.test.ts b/src/plugins/plugin-source-file.copy.test.ts
+index ed8925bac3..adb18d9ac1 100644
+--- a/src/plugins/plugin-source-file.copy.test.ts
++++ b/src/plugins/plugin-source-file.copy.test.ts
+@@ -3,7 +3,7 @@ import fs from "node:fs";
+ import path from "node:path";
+ import * as fsSafe from "@openclaw/fs-safe/advanced";
+ import { FsSafeError } from "@openclaw/fs-safe/errors";
+-import { afterEach, expect, it, vi } from "vitest";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+ import { copyPluginSourceFile, pluginSourceStatIdentity } from "./plugin-source-file.js";
+
+@@ -14,6 +14,33 @@ vi.mock("@openclaw/fs-safe/advanced", async (importOriginal) => ({
+ const dirs = useAutoCleanupTempDirTracker(afterEach);
+ afterEach(() => vi.restoreAllMocks());
+
++it.each(["linux", "darwin"] as const)(
++  "uses guarded platform copies for small sources on %s",
++  (platform) => {
++    const subject = fixture();
++    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
++    const admitted = fs.statSync(subject.source, { bigint: true });
++    const copy = vi.spyOn(fsSafe, "copyRootFileSync");
++    const copied = subject.copy();
++    expect(copy).toHaveBeenCalledOnce();
++    expect(copy).toHaveBeenCalledWith(
++      expect.objectContaining({
++        expectedSourceIdentity: { dev: admitted.dev, ino: admitted.ino },
++        maxBytes: subject.bytes.length,
++        sourceHardlinks: "allow",
++        clone: "auto",
++      }),
++    );
++    expect(copied.contentHash).toBe(createHash("sha256").update(subject.bytes).digest("hex"));
++    expect(copied.sourceIdentity).toBe(pluginSourceStatIdentity(admitted));
++    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
++    expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
++    expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
++    fs.writeFileSync(subject.source, "edited");
++    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
++  },
++);
++
+ function fixture(bytes = Buffer.from("captured"), basename = "input.js") {
+   const root = fs.realpathSync(dirs.make("plugin-small-copy-"));
+   const source = path.join(root, basename);
+@@ -30,78 +57,40 @@ function fixture(bytes = Buffer.from("captured"), basename = "input.js") {
+   };
+ }
+
+-it("copies small files through owned descriptors with the same bytes, identity and mode", () => {
+-  const subject = fixture();
+-  const admitted = fs.statSync(subject.source, { bigint: true });
+-  const clone = vi.spyOn(fsSafe, "copyRootFileSync");
+-  const copied = subject.copy();
+-  expect(clone).not.toHaveBeenCalled();
+-  expect(copied).toEqual({
+-    contentHash: createHash("sha256").update(subject.bytes).digest("hex"),
+-    sizeBytes: subject.bytes.length,
+-    sourceIdentity: pluginSourceStatIdentity(admitted),
+-  });
+-  expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
+-  expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
+-  if (process.platform !== "win32") {
+-    expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
+-  }
+-  fs.writeFileSync(subject.source, "edited");
+-  expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
+-});
+-
+-it.each(["grow", "shrink", "replace", "symlink"])(
+-  "refuses a source that changes after descriptor admission: %s",
++it.each(["grow", "shrink", "rewrite", "replace", "symlink"])(
++  "rejects source %s between admission and the guarded copy",
+   (change) => {
+-    const subject = fixture();
+-    const create = fsSafe.createFileSync;
+-    vi.spyOn(fsSafe, "createFileSync").mockImplementation((target, options) => {
+-      if (target === subject.target) {
+-        if (change === "grow") {
+-          fs.appendFileSync(subject.source, "more");
+-        } else if (change === "shrink") {
+-          fs.truncateSync(subject.source, 1);
++    const subject = fixture(Buffer.alloc(64 * 1024 + 1, "S"));
++    const copyFile = vi.fn((options: Parameters<typeof fsSafe.copyRootFileSync>[0]) => {
++      if (change === "grow") {
++        fs.appendFileSync(subject.source, "more");
++      } else if (change === "shrink") {
++        fs.truncateSync(subject.source, 1);
++      } else if (change === "rewrite") {
++        fs.writeFileSync(subject.source, Buffer.alloc(subject.bytes.length, "E"));
++      } else {
++        fs.renameSync(subject.source, `${subject.source}.original`);
++        if (change === "replace") {
++          fs.writeFileSync(subject.source, "replacement");
+         } else {
+-          fs.renameSync(subject.source, `${subject.source}.original`);
+-          if (change === "replace") {
+-            fs.writeFileSync(subject.source, "replacement");
+-          } else {
+-            fs.symlinkSync(`${subject.source}.original`, subject.source);
+-          }
++          fs.symlinkSync(`${subject.source}.original`, subject.source);
+         }
+       }
+-      return create(target, options);
++      return fsSafe.copyRootFileSync(options);
+     });
+-    expect(subject.copy).toThrow();
+-    expect(fs.existsSync(subject.target)).toBe(false);
++    expect(() =>
++      copyPluginSourceFile(subject.source, subject.root, subject.target, { copyFile }),
++    ).toThrow();
++    expect(copyFile).toHaveBeenCalledOnce();
+   },
+ );
+
+-it.each(["grow", "shrink"])("refuses source %s during the bounded transfer", (change) => {
+-  const subject = fixture();
+-  const write = fs.writeSync;
+-  let changed = false;
+-  vi.spyOn(fs, "writeSync").mockImplementation((...args) => {
+-    if (!changed) {
+-      changed = true;
+-      if (change === "grow") {
+-        fs.appendFileSync(subject.source, "more");
+-      } else {
+-        fs.truncateSync(subject.source, 1);
+-      }
+-    }
+-    return Reflect.apply(write, fs, args);
+-  });
+-  expect(subject.copy).toThrow("Plugin source changed");
+-  expect(changed).toBe(true);
+-});
+-
+ it.each(["leaf", "parent", "hardlink"])(
+-  "refuses substituted destination %s before transfer",
++  "rejects destination %s substitution after guarded copying",
+   (change) => {
+-    const subject = fixture();
+-    const transfer = fsSafe.copyFileDescriptorSync;
+-    vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation((source, target, options) => {
++    const subject = fixture(Buffer.alloc(64 * 1024 + 1, "S"));
++    const copyFile = (options: Parameters<typeof fsSafe.copyRootFileSync>[0]) => {
++      const copied = fsSafe.copyRootFileSync(options);
+       if (change === "parent") {
+         fs.renameSync(path.dirname(subject.target), `${path.dirname(subject.target)}.original`);
+         fs.mkdirSync(path.dirname(subject.target));
+@@ -112,25 +101,122 @@ it.each(["leaf", "parent", "hardlink"])(
+       } else {
+         fs.linkSync(subject.target, `${subject.target}.alias`);
+       }
+-      return transfer(source, target, options);
+-    });
+-    expect(subject.copy).toThrow();
++      return copied;
++    };
++    expect(() =>
++      copyPluginSourceFile(subject.source, subject.root, subject.target, { copyFile }),
++    ).toThrow();
+     if (change !== "hardlink") {
+       expect(fs.readFileSync(subject.target, "utf8")).toBe("foreign");
+     }
+   },
+ );
+
+-it("preserves disk-full diagnostics and does not retry descriptor transfer", () => {
+-  const subject = fixture();
+-  const cause = Object.assign(new Error("capture filesystem is full"), { code: "ENOSPC" });
+-  const failure = new FsSafeError("helper-failed", "descriptor copy failed", { cause });
+-  const transfer = vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation(() => {
+-    throw failure;
++describe("Windows descriptor copies", () => {
++  beforeEach(() => vi.spyOn(process, "platform", "get").mockReturnValue("win32"));
++
++  it("copies small files through owned descriptors with the same bytes, identity and mode", () => {
++    const subject = fixture();
++    const admitted = fs.statSync(subject.source, { bigint: true });
++    const clone = vi.spyOn(fsSafe, "copyRootFileSync");
++    const copied = subject.copy();
++    expect(clone).not.toHaveBeenCalled();
++    expect(copied).toEqual({
++      contentHash: createHash("sha256").update(subject.bytes).digest("hex"),
++      sizeBytes: subject.bytes.length,
++      sourceIdentity: pluginSourceStatIdentity(admitted),
++    });
++    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
++    expect(fs.statSync(subject.target).ino).not.toBe(fs.statSync(subject.source).ino);
++    if (process.platform !== "win32") {
++      expect(fs.statSync(subject.target).mode & 0o777).toBe(0o700);
++    }
++    fs.writeFileSync(subject.source, "edited");
++    expect(fs.readFileSync(subject.target)).toEqual(subject.bytes);
++  });
++
++  it.each(["grow", "shrink", "replace", "symlink"])(
++    "refuses a source that changes after descriptor admission: %s",
++    (change) => {
++      const subject = fixture();
++      const create = fsSafe.createFileSync;
++      vi.spyOn(fsSafe, "createFileSync").mockImplementation((target, options) => {
++        if (target === subject.target) {
++          if (change === "grow") {
++            fs.appendFileSync(subject.source, "more");
++          } else if (change === "shrink") {
++            fs.truncateSync(subject.source, 1);
++          } else {
++            fs.renameSync(subject.source, `${subject.source}.original`);
++            if (change === "replace") {
++              fs.writeFileSync(subject.source, "replacement");
++            } else {
++              fs.symlinkSync(`${subject.source}.original`, subject.source);
++            }
++          }
++        }
++        return create(target, options);
++      });
++      expect(subject.copy).toThrow();
++      expect(fs.existsSync(subject.target)).toBe(false);
++    },
++  );
++
++  it.each(["grow", "shrink"])("refuses source %s during the bounded transfer", (change) => {
++    const subject = fixture();
++    const write = fs.writeSync;
++    let changed = false;
++    vi.spyOn(fs, "writeSync").mockImplementation((...args) => {
++      if (!changed) {
++        changed = true;
++        if (change === "grow") {
++          fs.appendFileSync(subject.source, "more");
++        } else {
++          fs.truncateSync(subject.source, 1);
++        }
++      }
++      return Reflect.apply(write, fs, args);
++    });
++    expect(subject.copy).toThrow("Plugin source changed");
++    expect(changed).toBe(true);
++  });
++
++  it.each(["leaf", "parent", "hardlink"])(
++    "refuses substituted destination %s before transfer",
++    (change) => {
++      const subject = fixture();
++      const transfer = fsSafe.copyFileDescriptorSync;
++      vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation((source, target, options) => {
++        if (change === "parent") {
++          fs.renameSync(path.dirname(subject.target), `${path.dirname(subject.target)}.original`);
++          fs.mkdirSync(path.dirname(subject.target));
++          fs.writeFileSync(subject.target, "foreign");
++        } else if (change === "leaf") {
++          fs.renameSync(subject.target, `${subject.target}.original`);
++          fs.writeFileSync(subject.target, "foreign");
++        } else {
++          fs.linkSync(subject.target, `${subject.target}.alias`);
++        }
++        return transfer(source, target, options);
++      });
++      expect(subject.copy).toThrow();
++      if (change !== "hardlink") {
++        expect(fs.readFileSync(subject.target, "utf8")).toBe("foreign");
++      }
++    },
++  );
++
++  it("preserves disk-full diagnostics and does not retry descriptor transfer", () => {
++    const subject = fixture();
++    const cause = Object.assign(new Error("capture filesystem is full"), { code: "ENOSPC" });
++    const failure = new FsSafeError("helper-failed", "descriptor copy failed", { cause });
++    const transfer = vi.spyOn(fsSafe, "copyFileDescriptorSync").mockImplementation(() => {
++      throw failure;
++    });
++    expect(subject.copy).toThrow("capture filesystem is full");
++    expect(transfer).toHaveBeenCalledOnce();
++    // A failed acquisition is not retried over the partially created output.
++    expect(subject.copy).toThrow(expect.objectContaining({ code: "already-exists" }));
++    expect(transfer).toHaveBeenCalledOnce();
+   });
+-  expect(subject.copy).toThrow("capture filesystem is full");
+-  expect(transfer).toHaveBeenCalledOnce();
+-  // A failed acquisition is not retried over the partially created output.
+-  expect(subject.copy).toThrow(expect.objectContaining({ code: "already-exists" }));
+-  expect(transfer).toHaveBeenCalledOnce();
+ });
 diff --git a/src/plugins/plugin-source-file.ts b/src/plugins/plugin-source-file.ts
-index 4cf860d7ee..f347911aaf 100644
+index 4cf860d7ee..ff4273acdf 100644
 --- a/src/plugins/plugin-source-file.ts
 +++ b/src/plugins/plugin-source-file.ts
 @@ -141,12 +141,10 @@ function copySmallPluginSourceFile(
@@ -18007,7 +18294,15 @@ index 4cf860d7ee..f347911aaf 100644
  }
 
  export function copyPluginSourceFile(
-@@ -193,13 +191,11 @@ export function copyPluginSourceFile(
+@@ -168,6 +166,7 @@ export function copyPluginSourceFile(
+       // Windows needs this path most: fs-safe skips native copies and path-admission
+       // caching on win32, so guarded clones of every small file stall Gateway startup.
+       if (
++        process.platform === "win32" &&
+         admitted.size <= BigInt(SMALL_SOURCE_COPY_BYTES) &&
+         !/\.(?:node|so|dylib|dll)$/iu.test(source) &&
+         !isPluginNativeDescriptor(fd) &&
+@@ -193,13 +192,35 @@ export function copyPluginSourceFile(
          mode,
          sourceHardlinks: "allow",
        });
@@ -18018,6 +18313,30 @@ index 4cf860d7ee..f347911aaf 100644
 -            sourceIdentity: pluginSourceStatIdentity(admitted, copied.sourceIdentity),
 -          }
 -        : undefined;
++      const before = pluginSourceStatIdentity(admitted);
++      const after = pluginSourceStatIdentity(fs.fstatSync(fd, { bigint: true }));
++      if (
++        copied.bytes !== Number(admitted.size) ||
++        (before !== after && !pluginSourceIdentityChangedOnlyByCtime(before, after))
++      ) {
++        throw new FsSafeError("path-mismatch", "Plugin source changed while copying");
++      }
++      for (const current of [
++        fs.lstatSync(target, { bigint: true }),
++        fs.fstatSync(copied.fd, { bigint: true }),
++      ]) {
++        if (
++          !current.isFile() ||
++          current.nlink !== 1n ||
++          current.dev !== copied.identity.dev ||
++          current.ino !== copied.identity.ino
++        ) {
++          throw new FsSafeError(
++            "path-mismatch",
++            "Plugin capture destination changed during copying",
++          );
++        }
++      }
 +      // Optional content hashes use the copied descriptor; receipts still recheck its path.
 +      return {
 +        ...(options.hashCopiedContent ? hashPluginSourceDescriptor(copied.fd) : {}),

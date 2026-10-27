@@ -10,6 +10,8 @@ The patch also backports [Doctor's settled preflight reuse](https://github.com/o
 
 Gateway source acquisition prepares up to four independent external plugins at once, bounded by available CPUs. Evaluation, registration, and diagnostics remain in manifest order. Bundled, retained, and recovered plugins form ordering boundaries. Failed or retired loads join pending captures and release their resources before returning; synchronous CLI loads still acquire sources inline. Readiness waits for the complete registry. Native ESM hooks check the captured artifact directory before requesting module classification or preparation from its worker. Host modules outside that directory avoid unrelated worker calls; captured modules retain availability checks, preparation, and their existing source and native-admission owners.
 
+On Linux and macOS, small source files use the existing guarded platform copy batch. Windows retains its descriptor transfer path. Both paths reject source changes and destination substitution, preserve file modes and content hashes, and keep each capture independently owned.
+
 Codex declares the individual legacy sidecars and session indexes that its migration can modify, plus the shared SQLite database. Recovery inventory excludes read-only transcripts and unrelated session files, avoiding whole-directory captures. The source-test stage runs this inventory regression alongside the Codex worker checks.
 
 Healthy shared-state maintenance leaves `PRAGMA user_version`, schema metadata, and SQLite bytes unchanged. Real version or ownership repairs still write their metadata and pass the existing admission checks. This removes writes that changed an otherwise healthy database during every maintenance pass.
