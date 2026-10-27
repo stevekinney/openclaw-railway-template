@@ -193,7 +193,8 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   assert.match(dockerfile, /generateNpmPackageLock\(directory, \{ installStrategy: "shallow" \}\)/);
   assert.match(dockerfile, /for plugin in acpx slack lobster firecrawl exa typesafe; do/);
   assert.match(dockerfile, /preparePackageBundledPlugins\("\/app", plugins/);
-  assert.match(dockerfile, /--lockfile-only.*--offline.*--ignore-scripts.*--no-frozen-lockfile/);
+  assert.match(dockerfile, /--lockfile-only.*--prefer-offline.*--ignore-scripts.*--no-frozen-lockfile/);
+  assert.doesNotMatch(dockerfile, /--lockfile-only[^\n]*--offline/);
   assert.match(dockerfile, /--select-bundled-plugin", "acpx"[\s\S]*--select-bundled-plugin", "typesafe"/);
   assert.match(dockerfile, /cp -a "\/tmp\/\$plugin-production-dependencies\/node_modules" "dist\/extensions\/\$plugin\/node_modules"/);
   assert.match(dockerfile, /check-slack-routing\.ts runtime \/app \/etc\/openclaw-slack-routing\.patch/);
