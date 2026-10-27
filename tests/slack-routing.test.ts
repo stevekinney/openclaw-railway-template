@@ -18,6 +18,10 @@ function fixture(run: (root: string, patch: string, release: string) => void): v
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0", dependencies: { zod: "4.6.6" } }));
     mkdirSync(join(root, "node_modules/zod"), { recursive: true });
     writeFileSync(join(root, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "4.6.6" }));
+    for (const [name, version] of [["undici", "8.12.3"], ["express", "5.2.1"], ["express/node_modules/body-parser", "2.4.0"]]) {
+      mkdirSync(join(root, "node_modules", name), { recursive: true });
+      writeFileSync(join(root, "node_modules", name, "package.json"), JSON.stringify({ name, version }));
+    }
     const patch = join(root, "routing.patch");
     writeFileSync(patch, "complete routing patch");
     writeFileSync(join(root, "dist/build-info.json"), JSON.stringify({ version: "1.0.0", slackRoutingContractVersion: 1, slackRoutingPatchDigest: createHash("sha256").update(readFileSync(patch)).digest("hex") }));
@@ -105,6 +109,18 @@ test("rejects inherited host dependencies that differ from the patched source lo
     assert.throws(() => verifyRuntimeMetadata(root, patch), /host Zod dependency/);
   });
 });
+
+for (const [dependency, version, message] of [
+  ["undici", "8.11.2", /host Undici dependency/],
+  ["express/node_modules/body-parser", "2.3.0", /Express body-parser dependency/],
+] as const) {
+  test(`rejects the vulnerable installed ${dependency} dependency`, () => {
+    fixture((root, patch) => {
+      writeFileSync(join(root, "node_modules", dependency, "package.json"), JSON.stringify({ version }));
+      assert.throws(() => verifyRuntimeMetadata(root, patch), message);
+    });
+  });
+}
 
 test("replaces companion dependency trees without retaining release-only packages", () => {
   fixture((root) => {

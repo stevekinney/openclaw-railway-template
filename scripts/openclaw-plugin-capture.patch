@@ -223,6 +223,19 @@ index 16bfc4f670..a714c23c71 100644
    },
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*"
+diff --git a/extensions/anthropic-vertex/package.json b/extensions/anthropic-vertex/package.json
+index 31cbd79513..fbd3f89109 100644
+--- a/extensions/anthropic-vertex/package.json
++++ b/extensions/anthropic-vertex/package.json
+@@ -10,7 +10,7 @@
+   "dependencies": {
+     "@anthropic-ai/vertex-sdk": "0.20.2",
+     "google-auth-library": "11.1.0",
+-    "undici": "8.11.2"
++    "undici": "8.12.3"
+   },
+   "devDependencies": {
+     "@openclaw/plugin-sdk": "workspace:*"
 diff --git a/extensions/apple-fm/package.json b/extensions/apple-fm/package.json
 index 8d587377d7..1d59189e15 100644
 --- a/extensions/apple-fm/package.json
@@ -237,10 +250,10 @@ index 8d587377d7..1d59189e15 100644
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*"
 diff --git a/extensions/browser/package.json b/extensions/browser/package.json
-index e8e8fc8d12..5d1c1231b6 100644
+index e8e8fc8d12..a15fbbc41e 100644
 --- a/extensions/browser/package.json
 +++ b/extensions/browser/package.json
-@@ -11,7 +11,7 @@
+@@ -11,12 +11,12 @@
      "playwright-core": "1.63.0",
      "typebox": "1.3.34",
      "yargs-parser": "22.0.0",
@@ -249,6 +262,12 @@ index e8e8fc8d12..5d1c1231b6 100644
    },
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*",
+     "@types/yargs-parser": "21.0.3",
+-    "undici": "8.11.2"
++    "undici": "8.12.3"
+   },
+   "openclaw": {
+     "extensions": [
 diff --git a/extensions/buzz/package.json b/extensions/buzz/package.json
 index b161d9156c..c1c25f1c0f 100644
 --- a/extensions/buzz/package.json
@@ -275,6 +294,79 @@ index bbec8e59d7..be97bca57a 100644
    },
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*",
+diff --git a/extensions/codex/doctor-contract-api.cold.test.ts b/extensions/codex/doctor-contract-api.cold.test.ts
+index d4bff2ccbe..b3271d9818 100644
+--- a/extensions/codex/doctor-contract-api.cold.test.ts
++++ b/extensions/codex/doctor-contract-api.cold.test.ts
+@@ -87,3 +87,53 @@ it("detects Codex legacy state without loading session storage", async () => {
+     await fs.rm(root, { recursive: true, force: true });
+   }
+ });
++
++it("declares precise migration backup resources without loading writable session state", async () => {
++  const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-inventory-"));
++  const stateDir = path.join(root, "state");
++  const sessionsDir = path.join(stateDir, "agents", "main", "sessions");
++  const storePath = path.join(sessionsDir, "sessions.json");
++  const transcriptPath = path.join(sessionsDir, "legacy.jsonl");
++  const sidecarPath = `${transcriptPath}.codex-app-server.json`;
++  const unrelatedPath = path.join(sessionsDir, "unrelated.txt");
++  const params = {
++    config: {},
++    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
++    stateDir,
++    serviceWorkspaceDir: path.join(root, "workspace"),
++  };
++  try {
++    await fs.mkdir(sessionsDir, { recursive: true });
++    await fs.writeFile(storePath, JSON.stringify({ legacy: { sessionId: "legacy" } }));
++    await fs.writeFile(transcriptPath, "read-only transcript");
++    await fs.writeFile(sidecarPath, "{}");
++    await fs.writeFile(unrelatedPath, "not owned by this migration");
++    const resources = await stateMigrations[0]!.collectBackupResources!(params);
++    expect(resources).toEqual(
++      expect.arrayContaining([
++        { path: await fs.realpath(sidecarPath), kind: "file" },
++        { path: storePath, kind: "file" },
++        { path: path.join(stateDir, "state", "openclaw.sqlite"), kind: "sqlite" },
++      ]),
++    );
++    for (const excluded of [
++      { path: transcriptPath, kind: "file" },
++      { path: unrelatedPath, kind: "file" },
++      { path: sessionsDir, kind: "directory" },
++    ]) {
++      expect(resources).not.toContainEqual(excluded);
++    }
++    const orphaned = stateMigrations.find(
++      (entry) => entry.id === "codex-app-server-orphaned-session-bindings",
++    );
++    expect(await orphaned!.collectBackupResources!(params)).toEqual([
++      { path: path.join(stateDir, "state", "openclaw.sqlite"), kind: "sqlite" },
++    ]);
++    await expect(fs.readFile(transcriptPath, "utf8")).resolves.toBe("read-only transcript");
++    await expect(fs.readdir(path.join(stateDir, "state"))).rejects.toMatchObject({
++      code: "ENOENT",
++    });
++  } finally {
++    await fs.rm(root, { recursive: true, force: true });
++  }
++});
+diff --git a/extensions/codex/doctor-contract-api.ts b/extensions/codex/doctor-contract-api.ts
+index e1d77e0400..c7c07ebeb1 100644
+--- a/extensions/codex/doctor-contract-api.ts
++++ b/extensions/codex/doctor-contract-api.ts
+@@ -187,6 +187,10 @@ export const stateMigrations: PluginDoctorStateMigration[] = [
+     label: "Codex app-server thread bindings",
+     // Config normalization loads this artifact too; state-only imports belong
+     // behind the detection and migration callbacks.
++    collectBackupResources: async (params) =>
++      (
++        await import("./src/migration/session-binding-discovery.js")
++      ).collectLegacySessionBindingBackupResources(params),
+     detectLegacyState: async (params) =>
+       (
+         await import("./src/migration/session-binding-sidecars.js")
 diff --git a/extensions/codex/package.json b/extensions/codex/package.json
 index a70b4b3b37..9ab7be56ba 100644
 --- a/extensions/codex/package.json
@@ -362,6 +454,817 @@ index b5fbf9f86b..3624bb852f 100644
 +    });
 +  });
 +});
+diff --git a/extensions/codex/src/migration/session-binding-discovery.ts b/extensions/codex/src/migration/session-binding-discovery.ts
+new file mode 100644
+index 0000000000..cca2fb2e74
+--- /dev/null
++++ b/extensions/codex/src/migration/session-binding-discovery.ts
+@@ -0,0 +1,376 @@
++import fs from "node:fs/promises";
++import path from "node:path";
++import {
++  listAgentIds,
++  resolveSessionAgentIdsStrict,
++} from "openclaw/plugin-sdk/agent-scope-runtime";
++import {
++  canonicalPathFromExistingAncestor,
++  isPathInside,
++} from "openclaw/plugin-sdk/file-access-runtime";
++import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
++import {
++  legacyStateFileExists,
++  type PluginDoctorStateMigration,
++} from "openclaw/plugin-sdk/runtime-doctor-migrations";
++import { resolveStorePath } from "openclaw/plugin-sdk/session-store-paths";
++import { readLegacySessionIndex } from "./session-binding-legacy-index.js";
++
++const LEGACY_BINDING_SUFFIX = ".codex-app-server.json";
++const MAX_SESSION_DIRECTORY_DEPTH = 16;
++
++type MigrationParams = Parameters<PluginDoctorStateMigration["migrateLegacyState"]>[0];
++type MigrationEnvironment = Pick<MigrationParams, "config" | "env" | "stateDir">;
++type MigrationBackupParams = Parameters<
++  NonNullable<PluginDoctorStateMigration["collectBackupResources"]>
++>[0];
++
++type SessionSurface = {
++  root: string;
++  scan: boolean;
++  storePaths: Set<string>;
++  agentIds: Set<string>;
++};
++
++export type LegacyBindingSource = {
++  sidecarPath: string;
++  transcriptPath: string;
++  agentIds: Set<string>;
++};
++
++export type LegacyBindingOwner = {
++  agentId: string;
++  sessionId: string;
++  sessionKey: string;
++  storePath: string;
++  transcriptPath: string;
++  lifecycleRevision?: string;
++  agentHarnessId?: string;
++  updatedAt?: number;
++};
++
++export type BindingOwnerCollection = {
++  owners: Map<string, LegacyBindingOwner[]>;
++  failures: string[];
++};
++
++async function readDirectoryEntries(directory: string) {
++  try {
++    return await fs.readdir(directory, { withFileTypes: true });
++  } catch (error) {
++    if (
++      ["EACCES", "ENOENT", "ENOTDIR", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")
++    ) {
++      return [];
++    }
++    throw error;
++  }
++}
++
++async function collectSessionSurfaces(params: MigrationEnvironment): Promise<SessionSurface[]> {
++  const surfaces = new Map<string, SessionSurface>();
++  const stateRoot = await canonicalPathFromExistingAncestor(params.stateDir);
++  const add = async (
++    root: string,
++    storePath: string,
++    agentId: string | undefined,
++    scan: boolean,
++  ) => {
++    const canonicalRoot = await canonicalPathFromExistingAncestor(root);
++    const surface = surfaces.get(canonicalRoot) ?? {
++      root: canonicalRoot,
++      scan: false,
++      storePaths: new Set<string>(),
++      agentIds: new Set<string>(),
++    };
++    surface.scan ||= scan;
++    // A store's configured path defines how relative sessionFile locators are
++    // resolved. Keep it intact; canonicalize only when deduplicating aliases.
++    if (!storePath.endsWith(".sqlite")) {
++      surface.storePaths.add(path.resolve(storePath));
++    }
++    if (agentId) {
++      surface.agentIds.add(agentId);
++    }
++    surfaces.set(canonicalRoot, surface);
++  };
++
++  const agentIds = new Set(listAgentIds(params.config));
++  const agentsDir = path.join(params.stateDir, "agents");
++  for (const entry of await readDirectoryEntries(agentsDir)) {
++    if (!entry.isDirectory() || entry.isSymbolicLink()) {
++      continue;
++    }
++    const agentId = resolveSessionAgentIdsStrict({
++      agentId: entry.name,
++      config: params.config,
++    }).sessionAgentId;
++    agentIds.add(agentId);
++    const root = path.join(agentsDir, entry.name, "sessions");
++    await add(root, path.join(root, "sessions.json"), agentId, true);
++  }
++
++  for (const agentId of agentIds) {
++    const storePath = resolveStorePath(params.config.session?.store, {
++      agentId,
++      env: params.env,
++    });
++    const root = path.dirname(storePath);
++    await add(
++      root,
++      storePath,
++      agentId,
++      isPathInside(stateRoot, await canonicalPathFromExistingAncestor(root)),
++    );
++  }
++
++  const legacyRoot = path.join(params.stateDir, "sessions");
++  const legacyOwner = tryResolveLegacyBindingOwnerAgentId({
++    sessionKey: "",
++    config: params.config,
++  });
++  await add(legacyRoot, path.join(legacyRoot, "sessions.json"), legacyOwner, true);
++  return [...surfaces.values()].toSorted((a, b) => a.root.localeCompare(b.root));
++}
++
++export async function collectLegacyBindingSources(
++  params: MigrationEnvironment,
++  options: { firstOnly?: boolean } = {},
++): Promise<{ sources: LegacyBindingSource[]; surfaces: SessionSurface[] }> {
++  const surfaces = await collectSessionSurfaces(params);
++  const sources = new Map<string, LegacyBindingSource>();
++  for (const surface of surfaces) {
++    const sidecars = surface.scan ? walkSidecars(surface.root) : iterateIndexedSidecars(surface);
++    for await (const sidecarPath of sidecars) {
++      const canonicalSidecar = await canonicalPathFromExistingAncestor(sidecarPath);
++      const source = sources.get(canonicalSidecar) ?? {
++        sidecarPath: canonicalSidecar,
++        transcriptPath: sidecarPath.slice(0, -LEGACY_BINDING_SUFFIX.length),
++        agentIds: new Set<string>(),
++      };
++      for (const agentId of surface.agentIds) {
++        source.agentIds.add(agentId);
++      }
++      sources.set(canonicalSidecar, source);
++      if (options.firstOnly) {
++        return { sources: [source], surfaces };
++      }
++    }
++  }
++  return {
++    sources: [...sources.values()].toSorted((a, b) => a.sidecarPath.localeCompare(b.sidecarPath)),
++    surfaces,
++  };
++}
++
++async function* iterateIndexedSidecars(surface: SessionSurface): AsyncGenerator<string> {
++  for (const storePath of surface.storePaths) {
++    const index = await readLegacySessionIndex(storePath);
++    if ("failure" in index) {
++      continue;
++    }
++    for (const { entry } of index.entries) {
++      // Legacy sidecars sit beside file-era transcripts; sqlite-marker entries
++      // never had sidecars, so the raw locator is skipped for them.
++      const sessionFile = entry.sessionFile?.trim() ?? "";
++      if (sessionFile.startsWith("sqlite:")) {
++        continue;
++      }
++      let transcriptPath: string;
++      try {
++        transcriptPath = await resolveLegacySessionFileLocator(
++          path.dirname(storePath),
++          entry,
++          entry.sessionId,
++        );
++      } catch {
++        continue;
++      }
++      const sidecarPath = `${transcriptPath}${LEGACY_BINDING_SUFFIX}`;
++      if (await legacyStateFileExists(sidecarPath)) {
++        yield sidecarPath;
++      }
++    }
++  }
++}
++
++async function* walkSidecars(root: string): AsyncGenerator<string> {
++  const pending = [{ directory: root, depth: 0 }];
++  while (pending.length > 0) {
++    const current = pending.pop()!;
++    for (const entry of (await readDirectoryEntries(current.directory)).toSorted((a, b) =>
++      a.name.localeCompare(b.name),
++    )) {
++      if (entry.isSymbolicLink()) {
++        continue;
++      }
++      const entryPath = path.join(current.directory, entry.name);
++      if (entry.isFile() && entry.name.endsWith(LEGACY_BINDING_SUFFIX)) {
++        yield entryPath;
++      } else if (entry.isDirectory() && current.depth < MAX_SESSION_DIRECTORY_DEPTH) {
++        pending.push({ directory: entryPath, depth: current.depth + 1 });
++      }
++    }
++  }
++}
++
++export async function collectBindingOwners(
++  sources: LegacyBindingSource[],
++  surfaces: SessionSurface[],
++  params: MigrationEnvironment,
++): Promise<BindingOwnerCollection> {
++  const sourcePaths = new Set(
++    await Promise.all(
++      sources.map((source) => canonicalPathFromExistingAncestor(source.transcriptPath)),
++    ),
++  );
++  const owners = new Map<string, Map<string, LegacyBindingOwner>>();
++  const storeAgentIds = new Map<string, Set<string>>();
++  for (const surface of surfaces) {
++    for (const storePath of surface.storePaths) {
++      const agents = storeAgentIds.get(storePath) ?? new Set<string>();
++      for (const agentId of surface.agentIds) {
++        agents.add(agentId);
++      }
++      storeAgentIds.set(storePath, agents);
++    }
++  }
++  const failures: string[] = [];
++  for (const [storePath, agentIds] of storeAgentIds) {
++    const canonicalStorePath = await canonicalPathFromExistingAncestor(storePath);
++    const index = await readLegacySessionIndex(storePath);
++    if ("failure" in index) {
++      failures.push(index.failure);
++      continue;
++    }
++    const sessionsDir = path.dirname(storePath);
++    for (const { sessionKey, entry } of index.entries) {
++      const sessionId = entry.sessionId;
++      const agentId = tryResolveLegacyBindingOwnerAgentId({
++        sessionKey,
++        config: params.config,
++        storeAgentIds: agentIds,
++      });
++      if (!agentId) {
++        failures.push(`session index ${storePath} has an ambiguous owner for ${sessionKey}`);
++        continue;
++      }
++      let legacyTranscriptPath: string;
++      let canonicalLegacyTranscriptPath: string;
++      try {
++        legacyTranscriptPath = await resolveLegacySessionFileLocator(sessionsDir, entry, sessionId);
++        canonicalLegacyTranscriptPath =
++          await canonicalPathFromExistingAncestor(legacyTranscriptPath);
++      } catch {
++        failures.push(`session index ${storePath} has an invalid locator for ${sessionKey}`);
++        continue;
++      }
++      if (!sourcePaths.has(canonicalLegacyTranscriptPath)) {
++        continue;
++      }
++      const owner: LegacyBindingOwner = {
++        agentId,
++        sessionId,
++        sessionKey,
++        storePath,
++        transcriptPath: legacyTranscriptPath,
++        ...(entry.lifecycleRevision ? { lifecycleRevision: entry.lifecycleRevision } : {}),
++        ...(entry.agentHarnessId?.trim() ? { agentHarnessId: entry.agentHarnessId.trim() } : {}),
++        ...(entry.updatedAt !== undefined ? { updatedAt: entry.updatedAt } : {}),
++      };
++      const candidates =
++        owners.get(canonicalLegacyTranscriptPath) ?? new Map<string, LegacyBindingOwner>();
++      const ownerKey = `${agentId}\0${sessionId}\0${sessionKey}\0${canonicalStorePath}`;
++      const configuredStorePath = resolveStorePath(params.config.session?.store, {
++        agentId,
++        env: params.env,
++      });
++      // The same physical store can appear through a configured symlink and a
++      // discovered real path. Mutate through the path the runtime itself owns.
++      if (!candidates.has(ownerKey) || storePath === configuredStorePath) {
++        candidates.set(ownerKey, owner);
++      }
++      owners.set(canonicalLegacyTranscriptPath, candidates);
++    }
++  }
++  return {
++    owners: new Map([...owners].map(([key, values]) => [key, [...values.values()]])),
++    failures,
++  };
++}
++
++// Doctor-only locator for retired file-backed session indexes. Active runtime
++// never resolves these paths; migration needs them only to find old sidecars.
++export async function resolveLegacySessionFileLocator(
++  sessionsDir: string,
++  entry: { sessionFile?: string },
++  sessionId: string,
++): Promise<string> {
++  const base = path.resolve(sessionsDir);
++  const fallback = path.join(base, `${sessionId}.jsonl`);
++  const sessionFile = entry.sessionFile?.trim();
++  if (!sessionFile) {
++    return fallback;
++  }
++  const candidate = path.resolve(base, sessionFile);
++  const [canonicalBase, canonicalCandidate] = await Promise.all([
++    canonicalPathFromExistingAncestor(base),
++    canonicalPathFromExistingAncestor(candidate),
++  ]);
++  if (!isPathInside(canonicalBase, canonicalCandidate)) {
++    throw new Error("legacy session file locator escapes its session directory");
++  }
++  return candidate;
++}
++
++function tryResolveLegacyBindingOwnerAgentId(params: {
++  sessionKey: string;
++  config: MigrationEnvironment["config"];
++  storeAgentIds?: Set<string>;
++}): string | undefined {
++  if (params.sessionKey.trim().toLowerCase().startsWith("agent:")) {
++    return resolveSessionAgentIdsStrict({
++      sessionKey: params.sessionKey,
++      config: params.config,
++    }).sessionAgentId;
++  }
++  const storeAgentId = params.storeAgentIds?.size === 1 ? [...params.storeAgentIds][0] : undefined;
++  const configuredAgentId = params.config.agents?.defaults?.systemAgent?.agentId?.trim();
++  const systemAgentId =
++    !storeAgentId && configuredAgentId ? normalizeAgentId(configuredAgentId) : undefined;
++  const fallbackAgentIds =
++    systemAgentId && listAgentIds(params.config).includes(systemAgentId)
++      ? [undefined, systemAgentId]
++      : [undefined];
++  for (const fallbackAgentId of fallbackAgentIds) {
++    try {
++      return resolveSessionAgentIdsStrict({
++        sessionKey: params.sessionKey,
++        config: params.config,
++        ...(storeAgentId ? { agentId: storeAgentId } : fallbackAgentId ? { fallbackAgentId } : {}),
++      }).sessionAgentId;
++    } catch (error) {
++      if ((error as { code?: unknown }).code !== "AGENT_SELECTION_REQUIRED") {
++        throw error;
++      }
++    }
++  }
++  return undefined;
++}
++
++export async function collectLegacySessionBindingBackupResources(
++  params: MigrationBackupParams,
++): Promise<readonly { path: string; kind: "sqlite" | "file" }[]> {
++  const { sources, surfaces } = await collectLegacyBindingSources(params);
++  const resources = new Map<string, "sqlite" | "file">();
++  for (const source of sources) {
++    resources.set(source.sidecarPath, "file");
++  }
++  for (const surface of surfaces) {
++    for (const storePath of surface.storePaths) {
++      resources.set(storePath, "file");
++    }
++  }
++  resources.set(path.join(params.stateDir, "state", "openclaw.sqlite"), "sqlite");
++  return [...resources].map(([resourcePath, kind]) => ({ path: resourcePath, kind }));
++}
+diff --git a/extensions/codex/src/migration/session-binding-orphans.ts b/extensions/codex/src/migration/session-binding-orphans.ts
+index 6e08753087..559b618358 100644
+--- a/extensions/codex/src/migration/session-binding-orphans.ts
++++ b/extensions/codex/src/migration/session-binding-orphans.ts
+@@ -1,4 +1,5 @@
+ import { createHash } from "node:crypto";
++import path from "node:path";
+ import { setImmediate } from "node:timers/promises";
+ import type {
+   PluginDoctorStateMigration,
+@@ -143,6 +144,9 @@ export const codexOrphanedSessionBindingMigration: PluginDoctorStateMigration =
+   label: "Codex app-server orphaned session bindings",
+   doctorOnly: true,
+   phase: "after-session-repair",
++  collectBackupResources: ({ stateDir }) => [
++    { path: path.join(stateDir, "state", "openclaw.sqlite"), kind: "sqlite" },
++  ],
+   async detectLegacyState(params) {
+     for await (const _ of iterateOrphanBindingPages(params)) {
+       return { preview: ["- Codex app-server bindings: remove orphaned session ownership"] };
+diff --git a/extensions/codex/src/migration/session-binding-sidecars.ts b/extensions/codex/src/migration/session-binding-sidecars.ts
+index c0229d06c1..9ec7575f58 100644
+--- a/extensions/codex/src/migration/session-binding-sidecars.ts
++++ b/extensions/codex/src/migration/session-binding-sidecars.ts
+@@ -1,72 +1,35 @@
+ import fs from "node:fs/promises";
+ import path from "node:path";
+ import { isDeepStrictEqual } from "node:util";
+-import {
+-  listAgentIds,
+-  resolveAgentDir,
+-  resolveSessionAgentIdsStrict,
+-} from "openclaw/plugin-sdk/agent-scope-runtime";
+-import {
+-  canonicalPathFromExistingAncestor,
+-  isPathInside,
+-} from "openclaw/plugin-sdk/file-access-runtime";
++import { resolveAgentDir } from "openclaw/plugin-sdk/agent-scope-runtime";
++import { canonicalPathFromExistingAncestor } from "openclaw/plugin-sdk/file-access-runtime";
+ import { withFileLock, type FileLockOptions } from "openclaw/plugin-sdk/file-lock";
+ import type { PluginStateKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
+-import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
+ import {
+   archiveLegacyStateSource,
+-  legacyStateFileExists,
+   type PluginDoctorStateMigration,
+ } from "openclaw/plugin-sdk/runtime-doctor-migrations";
+ import { pathExists } from "openclaw/plugin-sdk/security-runtime";
+-import { resolveStorePath } from "openclaw/plugin-sdk/session-store-paths";
+ import {
+   CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
+   CODEX_APP_SERVER_BINDING_NAMESPACE,
+ } from "../app-server/session-binding-meta.js";
+ import type { StoredCodexAppServerBinding as MigratedBindingRow } from "../app-server/session-binding-record.js";
++import {
++  collectBindingOwners,
++  collectLegacyBindingSources,
++  resolveLegacySessionFileLocator,
++  type LegacyBindingOwner,
++  type LegacyBindingSource,
++} from "./session-binding-discovery.js";
+ import { readLegacySessionIndex } from "./session-binding-legacy-index.js";
+
+-const LEGACY_BINDING_SUFFIX = ".codex-app-server.json";
+ const CODEX_AGENT_HARNESS_ID = "codex";
+-const MAX_SESSION_DIRECTORY_DEPTH = 16;
+ const LEGACY_BINDING_LOCK_OPTIONS: FileLockOptions = {
+   retries: { retries: 75, factor: 1, minTimeout: 1_000, maxTimeout: 1_000 },
+   stale: 120_000,
+ };
+-
+ type MigrationParams = Parameters<PluginDoctorStateMigration["migrateLegacyState"]>[0];
+-type MigrationEnvironment = Pick<MigrationParams, "config" | "env" | "stateDir">;
+-
+-type SessionSurface = {
+-  root: string;
+-  scan: boolean;
+-  storePaths: Set<string>;
+-  agentIds: Set<string>;
+-};
+-
+-type LegacyBindingSource = {
+-  sidecarPath: string;
+-  transcriptPath: string;
+-  agentIds: Set<string>;
+-};
+-
+-type LegacyBindingOwner = {
+-  agentId: string;
+-  sessionId: string;
+-  sessionKey: string;
+-  storePath: string;
+-  transcriptPath: string;
+-  lifecycleRevision?: string;
+-  agentHarnessId?: string;
+-  updatedAt?: number;
+-};
+-
+-type BindingOwnerCollection = {
+-  owners: Map<string, LegacyBindingOwner[]>;
+-  failures: string[];
+-};
+-
+ type SourceMigrationResult = {
+   archived: boolean;
+   importedKeys: number;
+@@ -74,297 +37,6 @@ type SourceMigrationResult = {
+   warning?: string;
+ };
+
+-async function collectSessionSurfaces(params: MigrationEnvironment): Promise<SessionSurface[]> {
+-  const surfaces = new Map<string, SessionSurface>();
+-  const stateRoot = await canonicalPathFromExistingAncestor(params.stateDir);
+-  const add = async (
+-    root: string,
+-    storePath: string,
+-    agentId: string | undefined,
+-    scan: boolean,
+-  ) => {
+-    const canonicalRoot = await canonicalPathFromExistingAncestor(root);
+-    const surface = surfaces.get(canonicalRoot) ?? {
+-      root: canonicalRoot,
+-      scan: false,
+-      storePaths: new Set<string>(),
+-      agentIds: new Set<string>(),
+-    };
+-    surface.scan ||= scan;
+-    // A store's configured path defines how relative sessionFile locators are
+-    // resolved. Keep it intact; canonicalize only when deduplicating aliases.
+-    if (!storePath.endsWith(".sqlite")) {
+-      surface.storePaths.add(path.resolve(storePath));
+-    }
+-    if (agentId) {
+-      surface.agentIds.add(agentId);
+-    }
+-    surfaces.set(canonicalRoot, surface);
+-  };
+-
+-  const agentIds = new Set(listAgentIds(params.config));
+-  const agentsDir = path.join(params.stateDir, "agents");
+-  for (const entry of await readDirectoryEntries(agentsDir)) {
+-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+-      continue;
+-    }
+-    const agentId = resolveSessionAgentIdsStrict({
+-      agentId: entry.name,
+-      config: params.config,
+-    }).sessionAgentId;
+-    agentIds.add(agentId);
+-    const root = path.join(agentsDir, entry.name, "sessions");
+-    await add(root, path.join(root, "sessions.json"), agentId, true);
+-  }
+-
+-  for (const agentId of agentIds) {
+-    const storePath = resolveStorePath(params.config.session?.store, {
+-      agentId,
+-      env: params.env,
+-    });
+-    const root = path.dirname(storePath);
+-    await add(
+-      root,
+-      storePath,
+-      agentId,
+-      isPathInside(stateRoot, await canonicalPathFromExistingAncestor(root)),
+-    );
+-  }
+-
+-  const legacyRoot = path.join(params.stateDir, "sessions");
+-  const legacyOwner = tryResolveLegacyBindingOwnerAgentId({
+-    sessionKey: "",
+-    config: params.config,
+-  });
+-  await add(legacyRoot, path.join(legacyRoot, "sessions.json"), legacyOwner, true);
+-  return [...surfaces.values()].toSorted((a, b) => a.root.localeCompare(b.root));
+-}
+-
+-async function collectLegacyBindingSources(
+-  params: MigrationEnvironment,
+-  options: { firstOnly?: boolean } = {},
+-): Promise<{ sources: LegacyBindingSource[]; surfaces: SessionSurface[] }> {
+-  const surfaces = await collectSessionSurfaces(params);
+-  const sources = new Map<string, LegacyBindingSource>();
+-  for (const surface of surfaces) {
+-    const sidecars = surface.scan ? walkSidecars(surface.root) : iterateIndexedSidecars(surface);
+-    for await (const sidecarPath of sidecars) {
+-      const canonicalSidecar = await canonicalPathFromExistingAncestor(sidecarPath);
+-      const source = sources.get(canonicalSidecar) ?? {
+-        sidecarPath: canonicalSidecar,
+-        transcriptPath: sidecarPath.slice(0, -LEGACY_BINDING_SUFFIX.length),
+-        agentIds: new Set<string>(),
+-      };
+-      for (const agentId of surface.agentIds) {
+-        source.agentIds.add(agentId);
+-      }
+-      sources.set(canonicalSidecar, source);
+-      if (options.firstOnly) {
+-        return { sources: [source], surfaces };
+-      }
+-    }
+-  }
+-  return {
+-    sources: [...sources.values()].toSorted((a, b) => a.sidecarPath.localeCompare(b.sidecarPath)),
+-    surfaces,
+-  };
+-}
+-
+-async function* iterateIndexedSidecars(surface: SessionSurface): AsyncGenerator<string> {
+-  for (const storePath of surface.storePaths) {
+-    const index = await readLegacySessionIndex(storePath);
+-    if ("failure" in index) {
+-      continue;
+-    }
+-    for (const { entry } of index.entries) {
+-      // Legacy sidecars sit beside file-era transcripts; sqlite-marker entries
+-      // never had sidecars, so the raw locator is skipped for them.
+-      const sessionFile = entry.sessionFile?.trim() ?? "";
+-      if (sessionFile.startsWith("sqlite:")) {
+-        continue;
+-      }
+-      let transcriptPath: string;
+-      try {
+-        transcriptPath = await resolveLegacySessionFileLocator(
+-          path.dirname(storePath),
+-          entry,
+-          entry.sessionId,
+-        );
+-      } catch {
+-        continue;
+-      }
+-      const sidecarPath = `${transcriptPath}${LEGACY_BINDING_SUFFIX}`;
+-      if (await legacyStateFileExists(sidecarPath)) {
+-        yield sidecarPath;
+-      }
+-    }
+-  }
+-}
+-
+-async function* walkSidecars(root: string): AsyncGenerator<string> {
+-  const pending = [{ directory: root, depth: 0 }];
+-  while (pending.length > 0) {
+-    const current = pending.pop()!;
+-    for (const entry of (await readDirectoryEntries(current.directory)).toSorted((a, b) =>
+-      a.name.localeCompare(b.name),
+-    )) {
+-      if (entry.isSymbolicLink()) {
+-        continue;
+-      }
+-      const entryPath = path.join(current.directory, entry.name);
+-      if (entry.isFile() && entry.name.endsWith(LEGACY_BINDING_SUFFIX)) {
+-        yield entryPath;
+-      } else if (entry.isDirectory() && current.depth < MAX_SESSION_DIRECTORY_DEPTH) {
+-        pending.push({ directory: entryPath, depth: current.depth + 1 });
+-      }
+-    }
+-  }
+-}
+-
+-async function collectBindingOwners(
+-  sources: LegacyBindingSource[],
+-  surfaces: SessionSurface[],
+-  params: MigrationEnvironment,
+-): Promise<BindingOwnerCollection> {
+-  const sourcePaths = new Set(
+-    await Promise.all(
+-      sources.map((source) => canonicalPathFromExistingAncestor(source.transcriptPath)),
+-    ),
+-  );
+-  const owners = new Map<string, Map<string, LegacyBindingOwner>>();
+-  const storeAgentIds = new Map<string, Set<string>>();
+-  for (const surface of surfaces) {
+-    for (const storePath of surface.storePaths) {
+-      const agents = storeAgentIds.get(storePath) ?? new Set<string>();
+-      for (const agentId of surface.agentIds) {
+-        agents.add(agentId);
+-      }
+-      storeAgentIds.set(storePath, agents);
+-    }
+-  }
+-  const failures: string[] = [];
+-  for (const [storePath, agentIds] of storeAgentIds) {
+-    const canonicalStorePath = await canonicalPathFromExistingAncestor(storePath);
+-    const index = await readLegacySessionIndex(storePath);
+-    if ("failure" in index) {
+-      failures.push(index.failure);
+-      continue;
+-    }
+-    const sessionsDir = path.dirname(storePath);
+-    for (const { sessionKey, entry } of index.entries) {
+-      const sessionId = entry.sessionId;
+-      const agentId = tryResolveLegacyBindingOwnerAgentId({
+-        sessionKey,
+-        config: params.config,
+-        storeAgentIds: agentIds,
+-      });
+-      if (!agentId) {
+-        failures.push(`session index ${storePath} has an ambiguous owner for ${sessionKey}`);
+-        continue;
+-      }
+-      let legacyTranscriptPath: string;
+-      let canonicalLegacyTranscriptPath: string;
+-      try {
+-        legacyTranscriptPath = await resolveLegacySessionFileLocator(sessionsDir, entry, sessionId);
+-        canonicalLegacyTranscriptPath =
+-          await canonicalPathFromExistingAncestor(legacyTranscriptPath);
+-      } catch {
+-        failures.push(`session index ${storePath} has an invalid locator for ${sessionKey}`);
+-        continue;
+-      }
+-      if (!sourcePaths.has(canonicalLegacyTranscriptPath)) {
+-        continue;
+-      }
+-      const owner: LegacyBindingOwner = {
+-        agentId,
+-        sessionId,
+-        sessionKey,
+-        storePath,
+-        transcriptPath: legacyTranscriptPath,
+-        ...(entry.lifecycleRevision ? { lifecycleRevision: entry.lifecycleRevision } : {}),
+-        ...(entry.agentHarnessId?.trim() ? { agentHarnessId: entry.agentHarnessId.trim() } : {}),
+-        ...(entry.updatedAt !== undefined ? { updatedAt: entry.updatedAt } : {}),
+-      };
+-      const candidates =
+-        owners.get(canonicalLegacyTranscriptPath) ?? new Map<string, LegacyBindingOwner>();
+-      const ownerKey = `${agentId}\0${sessionId}\0${sessionKey}\0${canonicalStorePath}`;
+-      const configuredStorePath = resolveStorePath(params.config.session?.store, {
+-        agentId,
+-        env: params.env,
+-      });
+-      // The same physical store can appear through a configured symlink and a
+-      // discovered real path. Mutate through the path the runtime itself owns.
+-      if (!candidates.has(ownerKey) || storePath === configuredStorePath) {
+-        candidates.set(ownerKey, owner);
+-      }
+-      owners.set(canonicalLegacyTranscriptPath, candidates);
+-    }
+-  }
+-  return {
+-    owners: new Map([...owners].map(([key, values]) => [key, [...values.values()]])),
+-    failures,
+-  };
+-}
+-
+-// Doctor-only locator for retired file-backed session indexes. Active runtime
+-// never resolves these paths; migration needs them only to find old sidecars.
+-async function resolveLegacySessionFileLocator(
+-  sessionsDir: string,
+-  entry: { sessionFile?: string },
+-  sessionId: string,
+-): Promise<string> {
+-  const base = path.resolve(sessionsDir);
+-  const fallback = path.join(base, `${sessionId}.jsonl`);
+-  const sessionFile = entry.sessionFile?.trim();
+-  if (!sessionFile) {
+-    return fallback;
+-  }
+-  const candidate = path.resolve(base, sessionFile);
+-  const [canonicalBase, canonicalCandidate] = await Promise.all([
+-    canonicalPathFromExistingAncestor(base),
+-    canonicalPathFromExistingAncestor(candidate),
+-  ]);
+-  if (!isPathInside(canonicalBase, canonicalCandidate)) {
+-    throw new Error("legacy session file locator escapes its session directory");
+-  }
+-  return candidate;
+-}
+-
+-function tryResolveLegacyBindingOwnerAgentId(params: {
+-  sessionKey: string;
+-  config: MigrationEnvironment["config"];
+-  storeAgentIds?: Set<string>;
+-}): string | undefined {
+-  if (params.sessionKey.trim().toLowerCase().startsWith("agent:")) {
+-    return resolveSessionAgentIdsStrict({
+-      sessionKey: params.sessionKey,
+-      config: params.config,
+-    }).sessionAgentId;
+-  }
+-  const storeAgentId = params.storeAgentIds?.size === 1 ? [...params.storeAgentIds][0] : undefined;
+-  const configuredAgentId = params.config.agents?.defaults?.systemAgent?.agentId?.trim();
+-  const systemAgentId =
+-    !storeAgentId && configuredAgentId ? normalizeAgentId(configuredAgentId) : undefined;
+-  const fallbackAgentIds =
+-    systemAgentId && listAgentIds(params.config).includes(systemAgentId)
+-      ? [undefined, systemAgentId]
+-      : [undefined];
+-  for (const fallbackAgentId of fallbackAgentIds) {
+-    try {
+-      return resolveSessionAgentIdsStrict({
+-        sessionKey: params.sessionKey,
+-        config: params.config,
+-        ...(storeAgentId ? { agentId: storeAgentId } : fallbackAgentId ? { fallbackAgentId } : {}),
+-      }).sessionAgentId;
+-    } catch (error) {
+-      if ((error as { code?: unknown }).code !== "AGENT_SELECTION_REQUIRED") {
+-        throw error;
+-      }
+-    }
+-  }
+-  return undefined;
+-}
+-
+ function copyBindingForSession(stored: MigratedBindingRow, sessionId: string): MigratedBindingRow {
+   return stored.state === "active"
+     ? { version: 1, state: "active", binding: stored.binding, sessionId }
+@@ -731,19 +403,6 @@ async function recordSessionOwner(
+       : "Codex harness ownership could not be recorded on its session";
+ }
+
+-async function readDirectoryEntries(directory: string) {
+-  try {
+-    return await fs.readdir(directory, { withFileTypes: true });
+-  } catch (error) {
+-    if (
+-      ["EACCES", "ENOENT", "ENOTDIR", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")
+-    ) {
+-      return [];
+-    }
+-    throw error;
+-  }
+-}
+-
+ export async function detectLegacySessionBindingSidecars(params: MigrationParams) {
+   const { sources } = await collectLegacyBindingSources(params, { firstOnly: true });
+   return sources.length > 0
+@@ -810,4 +469,3 @@ export async function migrateLegacySessionBindingSidecars(params: MigrationParam
+     ...(notices.length > 0 ? { notices } : {}),
+   };
+ }
+-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
 diff --git a/extensions/codex/worker-entry-contract.test.ts b/extensions/codex/worker-entry-contract.test.ts
 new file mode 100644
 index 0000000000..65e46c4ce8
@@ -412,12 +1315,15 @@ index 90544ce548..65c6152578 100644
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*"
 diff --git a/extensions/discord/package.json b/extensions/discord/package.json
-index 6cf1a3d6d7..4fdc4938dd 100644
+index 6cf1a3d6d7..f269526fe9 100644
 --- a/extensions/discord/package.json
 +++ b/extensions/discord/package.json
-@@ -16,7 +16,7 @@
+@@ -14,9 +14,9 @@
+     "libopus-wasm": "0.4.1",
+     "mdast-util-from-markdown": "2.0.3",
      "typebox": "1.3.34",
-     "undici": "8.11.2",
+-    "undici": "8.11.2",
++    "undici": "8.12.3",
      "ws": "8.22.0",
 -    "zod": "4.6.5"
 +    "zod": "4.6.6"
@@ -684,14 +1590,16 @@ index 3959690d34..ea52899404 100644
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*"
 diff --git a/extensions/slack/package.json b/extensions/slack/package.json
-index 94e85fd3a7..ea292ea930 100644
+index 94e85fd3a7..42bf49cccb 100644
 --- a/extensions/slack/package.json
 +++ b/extensions/slack/package.json
-@@ -14,7 +14,7 @@
+@@ -13,8 +13,8 @@
+     "@slack/web-api": "8.2.0",
      "get-east-asian-width": "1.7.0",
      "typebox": "1.3.34",
-     "undici": "8.11.2",
+-    "undici": "8.11.2",
 -    "zod": "4.6.5"
++    "undici": "8.12.3",
 +    "zod": "4.6.6"
    },
    "devDependencies": {
@@ -735,14 +1643,16 @@ index bcec08267f..ba5160091b 100644
    "openclaw": {
      "extensions": [
 diff --git a/extensions/telegram/package.json b/extensions/telegram/package.json
-index 2b6ad2a9e9..c4cede4410 100644
+index 2b6ad2a9e9..fc0e460ee9 100644
 --- a/extensions/telegram/package.json
 +++ b/extensions/telegram/package.json
-@@ -10,7 +10,7 @@
+@@ -9,8 +9,8 @@
+     "abort-controller": "3.0.0",
      "grammy": "1.46.0",
      "typebox": "1.3.34",
-     "undici": "8.11.2",
+-    "undici": "8.11.2",
 -    "zod": "4.6.5"
++    "undici": "8.12.3",
 +    "zod": "4.6.6"
    },
    "devDependencies": {
@@ -867,10 +1777,16 @@ index 31cff537aa..fda54589c2 100644
    "devDependencies": {
      "@openclaw/plugin-sdk": "workspace:*",
 diff --git a/package.json b/package.json
-index be4dcf19b1..14fc3d33ca 100644
+index be4dcf19b1..6089fb66a4 100644
 --- a/package.json
 +++ b/package.json
-@@ -2309,7 +2309,7 @@
+@@ -2304,12 +2304,12 @@
+     "tar": "7.5.22",
+     "tslog": "5.2.0",
+     "typebox": "1.3.34",
+-    "undici": "8.11.2",
++    "undici": "8.12.3",
+     "web-push": "3.6.7",
      "web-tree-sitter": "0.27.0",
      "ws": "8.22.0",
      "yaml": "2.9.1",
@@ -893,13 +1809,15 @@ index 62f8958462..334ee5a663 100644
    "exports": {
      ".": {
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 5798d3b83b..47d8cc3989 100644
+index 5798d3b83b..5b3aa91e5f 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -163,6 +163,14 @@ settings:
+@@ -163,6 +163,16 @@ settings:
    excludeLinksFromLockfile: false
 
  overrides:
++  express@5.2.1>body-parser: 2.4.0
++  undici@>=8.0.0 <8.12.3: 8.12.3
 +  '@agentclientprotocol/claude-agent-acp@0.85.1>zod': 4.6.6
 +  '@agentclientprotocol/codex-acp@2.1.1>zod': 4.6.6
 +  '@github/copilot-sdk@1.0.16>zod': 4.6.6
@@ -911,7 +1829,25 @@ index 5798d3b83b..47d8cc3989 100644
    '@lancedb/lancedb>@huggingface/transformers': '-'
    baileys>sharp: '-'
    baileys>audio-decode: 3.12.0
-@@ -226,10 +234,10 @@ importers:
+@@ -181,7 +191,7 @@ overrides:
+   '@aws-sdk/xml-builder': 3.972.41
+   '@hono/node-server': 2.1.3
+   axios: 1.20.0
+-  fast-uri: 4.2.1
++  fast-uri: 4.2.3
+   follow-redirects: 1.16.1
+   defu: 6.1.7
+   fast-xml-parser: 5.11.2
+@@ -192,7 +202,7 @@ overrides:
+   source-map-js: 1.2.2
+   file-type: 22.1.1
+   form-data: 4.0.6
+-  ip-address: 10.7.3
++  ip-address: 10.7.4
+   mailauth@7.1.0>nodemailer: 10.0.13
+   minimatch: 10.2.6
+   path-to-regexp: 8.4.2
+@@ -226,10 +236,10 @@ importers:
      dependencies:
        '@agentclientprotocol/sdk':
          specifier: 1.7.0
@@ -924,7 +1860,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@babel/generator':
          specifier: 8.0.6
          version: 8.0.6
-@@ -250,7 +258,7 @@ importers:
+@@ -250,7 +260,7 @@ importers:
          version: 1.0.0
        '@google/genai':
          specifier: 2.27.0
@@ -933,7 +1869,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@grammyjs/transformer-throttler':
          specifier: 1.2.1
          version: 1.2.1(grammy@1.46.0(supports-color@10.2.2))
-@@ -265,7 +273,7 @@ importers:
+@@ -265,7 +275,7 @@ importers:
          version: 2.7.0(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -942,16 +1878,36 @@ index 5798d3b83b..47d8cc3989 100644
        '@mozilla/readability':
          specifier: 0.6.0
          version: 0.6.0
-@@ -373,7 +381,7 @@ importers:
+@@ -277,7 +287,7 @@ importers:
+         version: 0.25.0
+       '@openclaw/proxyline':
+         specifier: 0.4.0
+-        version: 0.4.0(undici@8.11.2)
++        version: 0.4.0(undici@8.12.3)
+       '@silvia-odwyer/photon-node':
+         specifier: 0.3.4
+         version: 0.3.4
+@@ -373,7 +383,7 @@ importers:
          version: 12.2.0
        openai:
          specifier: 7.27.0
 -        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.5)
-+        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.6)
++        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.6)
        p-limit:
          specifier: 7.3.3
          version: 7.3.3
-@@ -420,8 +428,8 @@ importers:
+@@ -405,8 +415,8 @@ importers:
+         specifier: 1.3.34
+         version: 1.3.34
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
+       web-push:
+         specifier: 3.6.7
+         version: 3.6.7(supports-color@10.2.2)
+@@ -420,8 +430,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -962,7 +1918,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@a2ui/lit':
          specifier: 0.12.0
-@@ -623,8 +631,8 @@ importers:
+@@ -623,8 +633,8 @@ importers:
    extensions/a2a:
      dependencies:
        zod:
@@ -973,7 +1929,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -637,7 +645,7 @@ importers:
+@@ -637,7 +647,7 @@ importers:
      dependencies:
        '@agentclientprotocol/claude-agent-acp':
          specifier: 0.85.1
@@ -982,7 +1938,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@agentclientprotocol/codex-acp':
          specifier: 2.1.1
          version: 2.1.1
-@@ -651,8 +659,8 @@ importers:
+@@ -651,8 +661,8 @@ importers:
          specifier: 1.9.0
          version: 1.9.0
        zod:
@@ -993,12 +1949,12 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -668,10 +676,10 @@ importers:
+@@ -668,10 +678,10 @@ importers:
      dependencies:
        openai:
          specifier: 7.27.0
 -        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.5)
-+        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.6)
++        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.6)
        zod:
 -        specifier: 4.6.5
 -        version: 4.6.5
@@ -1007,7 +1963,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -709,7 +717,7 @@ importers:
+@@ -709,7 +719,7 @@ importers:
      dependencies:
        '@anthropic-ai/sdk':
          specifier: 0.131.0
@@ -1016,7 +1972,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@aws/bedrock-token-generator':
          specifier: 1.1.0
          version: 1.1.0
-@@ -728,7 +736,7 @@ importers:
+@@ -728,13 +738,13 @@ importers:
      dependencies:
        '@anthropic-ai/vertex-sdk':
          specifier: 0.20.2
@@ -1025,7 +1981,15 @@ index 5798d3b83b..47d8cc3989 100644
        google-auth-library:
          specifier: 11.1.0
          version: 11.1.0(supports-color@10.2.2)
-@@ -743,8 +751,8 @@ importers:
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
+     devDependencies:
+       '@openclaw/plugin-sdk':
+         specifier: workspace:*
+@@ -743,8 +753,8 @@ importers:
    extensions/apple-fm:
      dependencies:
        zod:
@@ -1036,7 +2000,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -794,7 +802,7 @@ importers:
+@@ -794,7 +804,7 @@ importers:
      dependencies:
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -1045,7 +2009,7 @@ index 5798d3b83b..47d8cc3989 100644
        chrome-devtools-mcp:
          specifier: 1.10.1
          version: 1.10.1(patch_hash=d31d6e7e187ea9fd4dad87ed3ad08073c77ffcfddd52bc4761b39a2dfce0ac1e)
-@@ -811,8 +819,8 @@ importers:
+@@ -811,8 +821,8 @@ importers:
          specifier: 22.0.0
          version: 22.0.0
        zod:
@@ -1056,7 +2020,18 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -830,8 +838,8 @@ importers:
+@@ -821,8 +831,8 @@ importers:
+         specifier: 21.0.3
+         version: 21.0.3
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
+
+   extensions/buzz:
+     dependencies:
+@@ -830,8 +840,8 @@ importers:
          specifier: 2.25.2
          version: 2.25.2(typescript@7.1.0-dev.20260922.1)
        zod:
@@ -1067,7 +2042,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -892,8 +900,8 @@ importers:
+@@ -892,8 +902,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -1078,7 +2053,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -949,8 +957,8 @@ importers:
+@@ -949,8 +959,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -1089,7 +2064,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1002,8 +1010,8 @@ importers:
+@@ -1002,8 +1012,8 @@ importers:
          specifier: 0.4.0
          version: 0.4.0
        zod:
@@ -1100,7 +2075,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1097,8 +1105,8 @@ importers:
+@@ -1097,8 +1107,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1111,7 +2086,15 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1137,8 +1145,8 @@ importers:
+@@ -1131,14 +1141,14 @@ importers:
+         specifier: 1.3.34
+         version: 1.3.34
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
+       ws:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -1122,7 +2105,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1221,8 +1229,8 @@ importers:
+@@ -1221,8 +1231,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1133,7 +2116,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1301,7 +1309,7 @@ importers:
+@@ -1301,7 +1311,7 @@ importers:
      dependencies:
        '@google/genai':
          specifier: 2.27.0
@@ -1142,7 +2125,7 @@ index 5798d3b83b..47d8cc3989 100644
        dotenv:
          specifier: 18.0.5
          version: 18.0.5
-@@ -1335,8 +1343,8 @@ importers:
+@@ -1335,8 +1345,8 @@ importers:
          specifier: 11.1.0
          version: 11.1.0(supports-color@10.2.2)
        zod:
@@ -1153,7 +2136,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1394,8 +1402,8 @@ importers:
+@@ -1394,8 +1404,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1164,7 +2147,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1413,8 +1421,8 @@ importers:
+@@ -1413,8 +1423,8 @@ importers:
    extensions/irc:
      dependencies:
        zod:
@@ -1175,7 +2158,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1447,8 +1455,8 @@ importers:
+@@ -1447,8 +1457,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1186,7 +2169,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1460,8 +1468,8 @@ importers:
+@@ -1460,8 +1470,8 @@ importers:
    extensions/linux-node:
      dependencies:
        zod:
@@ -1197,7 +2180,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1550,8 +1558,8 @@ importers:
+@@ -1550,8 +1560,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1208,7 +2191,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1563,8 +1571,8 @@ importers:
+@@ -1563,8 +1573,8 @@ importers:
    extensions/mattermost:
      dependencies:
        zod:
@@ -1219,16 +2202,16 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1602,7 +1610,7 @@ importers:
+@@ -1602,7 +1612,7 @@ importers:
          version: 21.2.0
        openai:
          specifier: 7.27.0
 -        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.5)
-+        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.6)
++        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.6)
        typebox:
          specifier: 1.3.34
          version: 1.3.34
-@@ -1648,8 +1656,8 @@ importers:
+@@ -1648,8 +1658,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -1239,7 +2222,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/memory-core':
          specifier: workspace:*
-@@ -1748,8 +1756,8 @@ importers:
+@@ -1748,8 +1758,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1250,7 +2233,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@microsoft/teams.common':
          specifier: 2.1.0
-@@ -1770,8 +1778,8 @@ importers:
+@@ -1770,8 +1780,8 @@ importers:
          specifier: 0.9.0
          version: 0.9.0
        zod:
@@ -1261,7 +2244,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1780,8 +1788,8 @@ importers:
+@@ -1780,8 +1790,8 @@ importers:
    extensions/nextcloud-talk:
      dependencies:
        zod:
@@ -1272,7 +2255,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1796,8 +1804,8 @@ importers:
+@@ -1796,8 +1806,8 @@ importers:
          specifier: 2.25.2
          version: 2.25.2(typescript@7.1.0-dev.20260922.1)
        zod:
@@ -1283,7 +2266,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1888,8 +1896,8 @@ importers:
+@@ -1888,8 +1898,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -1294,7 +2277,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1922,8 +1930,8 @@ importers:
+@@ -1922,8 +1932,8 @@ importers:
          specifier: 7.3.3
          version: 7.3.3
        zod:
@@ -1305,7 +2288,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1969,8 +1977,8 @@ importers:
+@@ -1969,8 +1979,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1316,7 +2299,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1986,7 +1994,7 @@ importers:
+@@ -1986,7 +1996,7 @@ importers:
          version: 1.43.0(vitest@5.0.1)
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -1325,7 +2308,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@openclaw/crabline':
          specifier: 0.1.29
          version: 0.1.29
-@@ -2009,8 +2017,8 @@ importers:
+@@ -2009,8 +2019,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -1336,7 +2319,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/crabbox-provider':
          specifier: workspace:*
-@@ -2061,8 +2069,8 @@ importers:
+@@ -2061,8 +2071,8 @@ importers:
    extensions/raft:
      dependencies:
        zod:
@@ -1347,7 +2330,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2083,8 +2091,8 @@ importers:
+@@ -2083,8 +2093,8 @@ importers:
          specifier: 2.4.0
          version: 2.4.0
        zod:
@@ -1358,7 +2341,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2129,8 +2137,8 @@ importers:
+@@ -2129,8 +2139,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -1369,9 +2352,23 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2157,8 +2165,8 @@ importers:
-         specifier: 8.11.2
-         version: 8.11.2
+@@ -2140,7 +2150,7 @@ importers:
+     dependencies:
+       '@slack/bolt':
+         specifier: 5.1.0
+-        version: 5.1.0(@types/express@5.0.6)(supports-color@10.2.2)(undici@8.11.2)
++        version: 5.1.0(@types/express@5.0.6)(supports-color@10.2.2)(undici@8.12.3)
+       '@slack/types':
+         specifier: 3.2.0
+         version: 3.2.0
+@@ -2154,11 +2164,11 @@ importers:
+         specifier: 1.3.34
+         version: 1.3.34
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
        zod:
 -        specifier: 4.6.5
 -        version: 4.6.5
@@ -1380,7 +2377,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2179,8 +2187,8 @@ importers:
+@@ -2179,8 +2189,8 @@ importers:
    extensions/sms:
      dependencies:
        zod:
@@ -1391,7 +2388,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2195,8 +2203,8 @@ importers:
+@@ -2195,8 +2205,8 @@ importers:
    extensions/synology-chat:
      dependencies:
        zod:
@@ -1402,7 +2399,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2221,8 +2229,8 @@ importers:
+@@ -2221,8 +2231,8 @@ importers:
    extensions/team-reports:
      dependencies:
        zod:
@@ -1413,9 +2410,14 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2258,8 +2266,8 @@ importers:
-         specifier: 8.11.2
-         version: 8.11.2
+@@ -2255,11 +2265,11 @@ importers:
+         specifier: 1.3.34
+         version: 1.3.34
+       undici:
+-        specifier: 8.11.2
+-        version: 8.11.2
++        specifier: 8.12.3
++        version: 8.12.3
        zod:
 -        specifier: 4.6.5
 -        version: 4.6.5
@@ -1424,7 +2426,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2289,8 +2297,8 @@ importers:
+@@ -2289,8 +2299,8 @@ importers:
          specifier: 3.0.0
          version: 3.0.0
        zod:
@@ -1435,7 +2437,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2336,8 +2344,8 @@ importers:
+@@ -2336,8 +2346,8 @@ importers:
          specifier: 8.2.0
          version: 8.2.0(@twurple/auth@8.2.0)
        zod:
@@ -1446,7 +2448,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2377,8 +2385,8 @@ importers:
+@@ -2377,8 +2387,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1457,7 +2459,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2396,8 +2404,8 @@ importers:
+@@ -2396,8 +2406,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1468,7 +2470,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2471,8 +2479,8 @@ importers:
+@@ -2471,8 +2481,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -1479,7 +2481,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/gateway-client':
          specifier: workspace:*
-@@ -2499,8 +2507,8 @@ importers:
+@@ -2499,8 +2509,8 @@ importers:
          specifier: 1.261.0
          version: 1.261.0
        zod:
@@ -1490,7 +2492,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2537,8 +2545,8 @@ importers:
+@@ -2537,8 +2547,8 @@ importers:
    extensions/zalo:
      dependencies:
        zod:
@@ -1501,7 +2503,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2556,8 +2564,8 @@ importers:
+@@ -2556,8 +2566,8 @@ importers:
          specifier: 2.2.0
          version: 2.2.0
        zod:
@@ -1512,7 +2514,7 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2600,16 +2608,16 @@ importers:
+@@ -2600,16 +2610,16 @@ importers:
      dependencies:
        '@anthropic-ai/sdk':
          specifier: 0.131.0
@@ -1528,11 +2530,11 @@ index 5798d3b83b..47d8cc3989 100644
        openai:
          specifier: 7.27.0
 -        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.5)
-+        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.6)
++        version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.6)
        partial-json:
          specifier: 0.1.7
          version: 0.1.7
-@@ -2741,8 +2749,8 @@ importers:
+@@ -2741,8 +2751,8 @@ importers:
          specifier: workspace:*
          version: link:../normalization-core
        zod:
@@ -1543,7 +2545,7 @@ index 5798d3b83b..47d8cc3989 100644
 
    packages/net-policy:
      dependencies:
-@@ -2859,7 +2867,7 @@ importers:
+@@ -2859,7 +2869,7 @@ importers:
          version: 2.3.0
        '@modelcontextprotocol/ext-apps':
          specifier: 2.0.3
@@ -1552,7 +2554,7 @@ index 5798d3b83b..47d8cc3989 100644
        '@noble/ed25519':
          specifier: 3.2.0
          version: 3.2.0
-@@ -2945,8 +2953,8 @@ importers:
+@@ -2945,8 +2955,8 @@ importers:
          specifier: 1.4.0
          version: 1.4.0
        zod:
@@ -1563,7 +2565,16 @@ index 5798d3b83b..47d8cc3989 100644
      devDependencies:
        '@types/markdown-it':
          specifier: 14.2.0
-@@ -4892,6 +4900,7 @@ packages:
+@@ -4761,7 +4771,7 @@ packages:
+     resolution: {integrity: sha512-Yd32LmKmu1kHrc7Wt8OHK0z+Tjc52fOfWYHl2znIGqskPrC/YaIKUgrhG4x7/oAemGMwBWHf3Eb3iaMKpZ/otg==}
+     engines: {node: '>=22.19.0'}
+     peerDependencies:
+-      undici: '>=8.5.0 <9'
++      undici: 8.12.3
+
+   '@openclaw/uirouter@0.1.2':
+     resolution: {integrity: sha512-m2FOEvUfXXIrHa5VFJBV/1CtQt1NkvE9duGvURvExUCizryRGqSLlZdYvV+cXQqV4No4UPWhz2F5H+iNFNSljg==}
+@@ -4892,6 +4902,7 @@ packages:
    '@opentelemetry/propagator-jaeger@2.11.0':
      resolution: {integrity: sha512-RUOqgoIqXOPQTOhpBrs07Y8sBlxVoLY5Fka6ueZ0prW+k6fWQsba/nHDY4gm+gmfuwtRqbX5Y9YKhDvktjbIqQ==}
      engines: {node: ^18.19.0 || >=20.6.0}
@@ -1571,7 +2582,7 @@ index 5798d3b83b..47d8cc3989 100644
      peerDependencies:
        '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
-@@ -4922,12 +4931,14 @@ packages:
+@@ -4922,12 +4933,14 @@ packages:
    '@opentelemetry/sdk-trace-base@2.11.0':
      resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
      engines: {node: ^18.19.0 || >=20.6.0}
@@ -1586,7 +2597,69 @@ index 5798d3b83b..47d8cc3989 100644
      peerDependencies:
        '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
-@@ -10322,11 +10333,8 @@ packages:
+@@ -5576,7 +5589,7 @@ packages:
+     resolution: {integrity: sha512-F9T+FKbtsYRKV23X8l6WW1fx7ncqsMufg+HLA4ffHf/MvZSCvPunFw576ekmY0Q03kgTAIByTKDJxnM+wn1okg==}
+     engines: {node: '>=20', npm: '>=9.6.4'}
+     peerDependencies:
+-      undici: ^7.0.0 || ^8.0.0
++      undici: 8.12.3
+
+   '@slack/types@3.2.0':
+     resolution: {integrity: sha512-IN4gdtlzQt8UJoj+1v+qAHeR4TxHO0KMlIs841SFfDQAcFFnsrWaGsEAE4goxVt8O/JOAFaGGdrFTzhNBop/Fg==}
+@@ -6630,8 +6643,8 @@ packages:
+   bn.js@4.12.5:
+     resolution: {integrity: sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==}
+
+-  body-parser@2.3.0:
+-    resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
++  body-parser@2.4.0:
++    resolution: {integrity: sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==}
+     engines: {node: '>=18'}
+
+   boolbase@2.0.0:
+@@ -7429,8 +7442,8 @@ packages:
+   fast-string-width@3.0.2:
+     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
+
+-  fast-uri@4.2.1:
+-    resolution: {integrity: sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg==}
++  fast-uri@4.2.3:
++    resolution: {integrity: sha512-I1PXwP5eAhlNlcdpjt9CgB59op2ZvZfxw+BkqGFVIUOgNpCVTcTqp3HhTX7brxj5vsip+nSY4nTvff+eIA76hg==}
+
+   fast-wrap-ansi@0.2.2:
+     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
+@@ -7828,8 +7841,8 @@ packages:
+     resolution: {integrity: sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==}
+     engines: {node: '>=12'}
+
+-  ip-address@10.7.3:
+-    resolution: {integrity: sha512-A1kdq/tSb5QjvKvAMgIoEvDBIgL7qaqVP/jkvSwYYRZ9iEzvPpopxp2wQfu3SuZRHtpHNxMn8Fs0bS+gf5Xmwg==}
++  ip-address@10.7.4:
++    resolution: {integrity: sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==}
+     engines: {node: '>= 12'}
+
+   ipaddr.js@1.9.1:
+@@ -8880,7 +8893,7 @@ packages:
+       '@aws-sdk/credential-provider-node': 3.972.84
+       '@smithy/hash-node': '>=4.3.0 <5'
+       '@smithy/signature-v4': '>=5.4.0 <6'
+-      undici: '>=5 <9'
++      undici: 8.12.3
+       ws: ^8.21.0
+       zod: ^3.25 || ^4.0
+     peerDependenciesMeta:
+@@ -9939,8 +9952,8 @@ packages:
+   undici-types@8.9.0:
+     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
+
+-  undici@8.11.2:
+-    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
++  undici@8.12.3:
++    resolution: {integrity: sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==}
+     engines: {node: '>=22.19.0'}
+
+   unhomoglyph@1.0.6:
+@@ -10322,11 +10335,8 @@ packages:
    zod@3.25.76:
      resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
@@ -1600,7 +2673,7 @@ index 5798d3b83b..47d8cc3989 100644
 
    zwitch@2.0.4:
      resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
-@@ -10353,32 +10361,32 @@ snapshots:
+@@ -10353,32 +10363,32 @@ snapshots:
        zod: 3.25.76
        zod-to-json-schema: 3.25.2(zod@3.25.76)
 
@@ -1643,7 +2716,7 @@ index 5798d3b83b..47d8cc3989 100644
 
    '@antfu/install-pkg@2.1.0':
      dependencies:
-@@ -10409,11 +10417,11 @@ snapshots:
+@@ -10409,11 +10419,11 @@ snapshots:
    '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.286':
      optional: true
 
@@ -1659,7 +2732,7 @@ index 5798d3b83b..47d8cc3989 100644
      optionalDependencies:
        '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.286
        '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.286
-@@ -10424,16 +10432,16 @@ snapshots:
+@@ -10424,16 +10434,16 @@ snapshots:
        '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.286
        '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.286
 
@@ -1680,7 +2753,7 @@ index 5798d3b83b..47d8cc3989 100644
        google-auth-library: 11.1.0(supports-color@10.2.2)
      transitivePeerDependencies:
        - supports-color
-@@ -11629,7 +11637,7 @@ snapshots:
+@@ -11629,7 +11639,7 @@ snapshots:
      dependencies:
        koffi: 3.2.1
        vscode-jsonrpc: 8.2.1
@@ -1689,7 +2762,7 @@ index 5798d3b83b..47d8cc3989 100644
      optionalDependencies:
        '@github/copilot-sdk-darwin-arm64': 1.0.16
        '@github/copilot-sdk-darwin-x64': 1.0.16
-@@ -11640,14 +11648,14 @@ snapshots:
+@@ -11640,14 +11650,14 @@ snapshots:
        '@github/copilot-sdk-win32-arm64': 1.0.16
        '@github/copilot-sdk-win32-x64': 1.0.16
 
@@ -1706,7 +2779,7 @@ index 5798d3b83b..47d8cc3989 100644
      transitivePeerDependencies:
        - bufferutil
        - supports-color
-@@ -12190,8 +12198,8 @@ snapshots:
+@@ -12190,8 +12200,8 @@ snapshots:
      dependencies:
        '@opentelemetry/semantic-conventions': 1.43.0
        ws: 8.22.0
@@ -1717,7 +2790,7 @@ index 5798d3b83b..47d8cc3989 100644
      optionalDependencies:
        '@opentelemetry/api': 1.9.1
        '@opentelemetry/resources': 2.11.0(@opentelemetry/api@1.9.1)
-@@ -12208,20 +12216,20 @@ snapshots:
+@@ -12208,20 +12218,20 @@ snapshots:
        eventsource-parser: 3.1.1
        jose: 6.2.12
        pkce-challenge: 5.0.1
@@ -1743,7 +2816,7 @@ index 5798d3b83b..47d8cc3989 100644
      dependencies:
        '@hono/node-server': 2.1.3(hono@4.13.12)
        ajv: 8.20.0
-@@ -12238,8 +12246,8 @@ snapshots:
+@@ -12238,8 +12248,8 @@ snapshots:
        json-schema-typed: 8.0.2
        pkce-challenge: 5.0.1
        raw-body: 3.0.2
@@ -1754,7 +2827,7 @@ index 5798d3b83b..47d8cc3989 100644
      transitivePeerDependencies:
        - supports-color
 
-@@ -12350,7 +12358,7 @@ snapshots:
+@@ -12350,7 +12360,7 @@ snapshots:
        re2js: 2.8.6
        ws: 8.22.0
        yaml: 2.9.1
@@ -1763,7 +2836,49 @@ index 5798d3b83b..47d8cc3989 100644
      transitivePeerDependencies:
        - bufferutil
        - utf-8-validate
-@@ -14034,12 +14042,12 @@ snapshots:
+@@ -12423,9 +12433,9 @@ snapshots:
+     dependencies:
+       ghostty-web: 0.4.0(patch_hash=d4c6598b6840564dac4a469f3aa9b8df24fe6eab48a6744302707017e095a524)
+
+-  '@openclaw/proxyline@0.4.0(undici@8.11.2)':
++  '@openclaw/proxyline@0.4.0(undici@8.12.3)':
+     dependencies:
+-      undici: 8.11.2
++      undici: 8.12.3
+
+   '@openclaw/uirouter@0.1.2': {}
+
+@@ -13135,11 +13145,11 @@ snapshots:
+
+   '@sindresorhus/transliterate@2.3.1': {}
+
+-  '@slack/bolt@5.1.0(@types/express@5.0.6)(supports-color@10.2.2)(undici@8.11.2)':
++  '@slack/bolt@5.1.0(@types/express@5.0.6)(supports-color@10.2.2)(undici@8.12.3)':
+     dependencies:
+       '@slack/logger': 5.0.0
+       '@slack/oauth': 4.0.0
+-      '@slack/socket-mode': 3.1.0(undici@8.11.2)
++      '@slack/socket-mode': 3.1.0(undici@8.12.3)
+       '@slack/types': 3.2.0
+       '@slack/web-api': 8.2.0
+       '@types/express': 5.0.6
+@@ -13163,13 +13173,13 @@ snapshots:
+       '@types/node': 26.6.4
+       jsonwebtoken: 9.0.3
+
+-  '@slack/socket-mode@3.1.0(undici@8.11.2)':
++  '@slack/socket-mode@3.1.0(undici@8.12.3)':
+     dependencies:
+       '@slack/logger': 5.0.0
+       '@slack/web-api': 8.2.0
+       '@types/node': 26.6.4
+       eventemitter3: 5.0.4
+-      undici: 8.11.2
++      undici: 8.12.3
+
+   '@slack/types@3.2.0': {}
+
+@@ -14034,12 +14044,12 @@ snapshots:
 
    acpx@0.19.4:
      dependencies:
@@ -1778,24 +2893,114 @@ index 5798d3b83b..47d8cc3989 100644
      transitivePeerDependencies:
        - bare-abort-controller
        - bare-buffer
-@@ -16790,14 +16798,14 @@ snapshots:
+@@ -14070,7 +14080,7 @@ snapshots:
+   ajv@8.20.0:
+     dependencies:
+       fast-deep-equal: 3.1.3
+-      fast-uri: 4.2.1
++      fast-uri: 4.2.3
+       json-schema-traverse: 1.0.0
+       require-from-string: 2.0.2
+
+@@ -14222,7 +14232,7 @@ snapshots:
+
+   bn.js@4.12.5: {}
+
+-  body-parser@2.3.0(supports-color@10.2.2):
++  body-parser@2.4.0(supports-color@10.2.2):
+     dependencies:
+       bytes: 3.1.2
+       content-type: 2.1.0
+@@ -14991,14 +15001,14 @@ snapshots:
+     dependencies:
+       debug: 4.4.3(supports-color@10.2.2)
+       express: 5.2.1(supports-color@10.2.2)
+-      ip-address: 10.7.3
++      ip-address: 10.7.4
+     transitivePeerDependencies:
+       - supports-color
+
+   express@5.2.1(supports-color@10.2.2):
+     dependencies:
+       accepts: 2.0.0
+-      body-parser: 2.3.0(supports-color@10.2.2)
++      body-parser: 2.4.0(supports-color@10.2.2)
+       content-disposition: 1.1.0
+       content-type: 1.0.5
+       cookie: 0.7.2
+@@ -15052,7 +15062,7 @@ snapshots:
+     dependencies:
+       fast-string-truncated-width: 3.0.3
+
+-  fast-uri@4.2.1: {}
++  fast-uri@4.2.3: {}
+
+   fast-wrap-ansi@0.2.2:
+     dependencies:
+@@ -15565,7 +15575,7 @@ snapshots:
+
+   internmap@2.0.3: {}
+
+-  ip-address@10.7.3: {}
++  ip-address@10.7.4: {}
+
+   ipaddr.js@1.9.1: {}
+
+@@ -15723,7 +15733,7 @@ snapshots:
+       parse5: 8.0.1
+       saxes: 6.0.0
+       tough-cookie: 6.0.2
+-      undici: 8.11.2
++      undici: 8.12.3
+       w3c-xmlserializer: 6.0.0
+       webidl-conversions: 8.0.1
+       whatwg-mimetype: 5.0.0
+@@ -16074,7 +16084,7 @@ snapshots:
+       nodemailer: 10.0.13
+       punycode.js: 2.3.1
+       tldts: 7.4.15
+-      undici: 8.11.2
++      undici: 8.12.3
+
+   mailparser@3.9.33:
+     dependencies:
+@@ -16790,14 +16800,14 @@ snapshots:
        - encoding
      optional: true
 
 -  openai@7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.5):
-+  openai@7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.22.0)(zod@4.6.6):
++  openai@7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.6):
      optionalDependencies:
        '@aws-sdk/credential-provider-node': 3.972.84
        '@smithy/hash-node': 4.5.2
        '@smithy/signature-v4': 5.7.4
-       undici: 8.11.2
+-      undici: 8.11.2
++      undici: 8.12.3
        ws: 8.22.0
 -      zod: 4.6.5
 +      zod: 4.6.6
 
    oxfmt@0.71.0:
      dependencies:
-@@ -18319,14 +18327,12 @@ snapshots:
+@@ -17499,7 +17509,7 @@ snapshots:
+
+   socks@2.8.10:
+     dependencies:
+-      ip-address: 10.7.3
++      ip-address: 10.7.4
+       smart-buffer: 4.2.0
+
+   sonic-boom@4.2.1:
+@@ -17905,7 +17915,7 @@ snapshots:
+
+   undici-types@8.9.0: {}
+
+-  undici@8.11.2: {}
++  undici@8.12.3: {}
+
+   unhomoglyph@1.0.6: {}
+
+@@ -18319,14 +18329,12 @@ snapshots:
      dependencies:
        zod: 3.25.76
 
@@ -1814,13 +3019,27 @@ index 5798d3b83b..47d8cc3989 100644
 
    zwitch@2.0.4: {}
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
-index e9250bb88e..3f9c21d0fd 100644
+index e9250bb88e..7aecb1f0a7 100644
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
-@@ -31,6 +31,15 @@ verifyDepsBeforeRun: false
+@@ -10,6 +10,11 @@ minimumReleaseAgeStrict: true
+
+ # Trusted Codex runtimes are outside the dependency cooldown.
+ minimumReleaseAgeExclude:
++  # Reviewed HTTP and ACP dependency security fixes approved for this image.
++  - "fast-uri@4.2.3"
++  - "ip-address@10.7.4"
++  - "body-parser@2.4.0"
++  - "undici@8.12.3"
+   - "@openai/codex"
+   - "@openai/codex-*"
+   # Reviewed fs-safe 0.25.0 release and native helpers; remove after 2026-10-15T21:23:59.079Z.
+@@ -31,6 +36,17 @@ verifyDepsBeforeRun: false
  blockExoticSubdeps: true
 
  overrides:
++  "express@5.2.1>body-parser": 2.4.0
++  "undici@>=8.0.0 <8.12.3": 8.12.3
 +  # GHSA-mrhx-c7xc-m3w5 also affects ACP adapters with their own exact Zod pin.
 +  "@agentclientprotocol/claude-agent-acp@0.85.1>zod": 4.6.6
 +  "@agentclientprotocol/codex-acp@2.1.1>zod": 4.6.6
@@ -1833,6 +3052,24 @@ index e9250bb88e..3f9c21d0fd 100644
    # Memory LanceDB supplies vectors; WhatsApp prepares thumbnails with Rastermill.
    "@lancedb/lancedb>@huggingface/transformers": "-"
    "baileys>sharp": "-"
+@@ -50,7 +66,7 @@ overrides:
+   "@aws-sdk/xml-builder": 3.972.41
+   "@hono/node-server": 2.1.3
+   axios: 1.20.0
+-  fast-uri: 4.2.1
++  fast-uri: 4.2.3
+   follow-redirects: 1.16.1
+   defu: 6.1.7
+   fast-xml-parser: 5.11.2
+@@ -62,7 +78,7 @@ overrides:
+   source-map-js: 1.2.2
+   file-type: 22.1.1
+   form-data: 4.0.6
+-  ip-address: 10.7.3
++  ip-address: 10.7.4
+   "mailauth@7.1.0>nodemailer": 10.0.13
+   minimatch: 10.2.6
+   path-to-regexp: 8.4.2
 diff --git a/src/agents/prepared-model-runtime.inbound-registry.ts b/src/agents/prepared-model-runtime.inbound-registry.ts
 index c0eae3b001..c45afb142f 100644
 --- a/src/agents/prepared-model-runtime.inbound-registry.ts
@@ -5470,10 +6707,10 @@ index 6071a5ab5b..cd93505d1e 100644
  const directories = useAutoCleanupTempDirTracker(afterEach);
 diff --git a/src/infra/sqlite-snapshot-prefetch.test.ts b/src/infra/sqlite-snapshot-prefetch.test.ts
 new file mode 100644
-index 0000000000..efc342207c
+index 0000000000..797fd7b6a8
 --- /dev/null
 +++ b/src/infra/sqlite-snapshot-prefetch.test.ts
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,134 @@
 +import type { BigIntStats, Stats } from "node:fs";
 +import path from "node:path";
 +import { DatabaseSync } from "node:sqlite";
@@ -5594,7 +6831,11 @@ index 0000000000..efc342207c
 +        database.exec("DELETE FROM records; INSERT INTO records VALUES ('transformed');");
 +      },
 +      validate: (database, label) => {
-+        validation.push(`${label}:${database.prepare("SELECT value FROM records").get()?.value}`);
++        const value = database.prepare("SELECT value FROM records").get()?.value;
++        if (typeof value !== "string") {
++          throw new Error("Expected a snapshot record containing a string");
++        }
++        validation.push(`${label}:${value}`);
 +      },
 +    });
 +

@@ -27,13 +27,16 @@ export function verifyRuntimeMetadata(root: string, patch: string): void {
   assert.equal(information.slackRoutingContractVersion, 1, "The image lost its Slack routing contract.");
   assert.equal(information.slackRoutingPatchDigest, createHash("sha256").update(readFileSync(patch)).digest("hex"));
   assert.equal(readObject(join(root, "dist/extensions/acpx/package.json")).version, information.version, "The image must contain its matched ACPX runtime.");
-  verifyInstalledZod(root);
+  verifyInstalledDependencies(root);
 }
 
 /** Check the resolved dependency before compilation as well as in the final image. */
-export function verifyInstalledZod(root: string): void {
-  const zod = createRequire(join(root, "package.json")).resolve("zod/package.json");
-  assert.equal(readObject(zod).version, "4.6.6", "The host Zod dependency must include the approved security fix.");
+export function verifyInstalledDependencies(root: string): void {
+  const require = createRequire(join(root, "package.json"));
+  assert.equal(readObject(require.resolve("zod/package.json")).version, "4.6.6", "The host Zod dependency must include the approved security fix.");
+  assert.equal(readObject(require.resolve("undici/package.json")).version, "8.12.3", "The host Undici dependency must include the approved security fixes.");
+  const expressRequire = createRequire(require.resolve("express/package.json"));
+  assert.equal(readObject(expressRequire.resolve("body-parser/package.json")).version, "2.4.0", "The Express body-parser dependency must include the approved security fix.");
 }
 
 /** Load an isolated plugin through the real host to verify its runtime routing API. */
@@ -121,7 +124,7 @@ if (import.meta.main) {
   const [mode, root, input] = process.argv.slice(2);
   const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, or dependencies ROOT";
   assert(root, usage);
-  if (mode === "dependencies") verifyInstalledZod(root);
+  if (mode === "dependencies") verifyInstalledDependencies(root);
   else if (mode === "identity") {
     assert(input, usage);
     verifySourceIdentity(root, input, process.env.GIT_COMMIT ?? "");

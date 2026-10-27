@@ -69,10 +69,11 @@ install_image_worker_probe() {
     const root = "/data/image-worker-probe";
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(root + "/package.json", JSON.stringify({ name: "image-worker-probe", version: "1.0.0", type: "module", openclaw: { extensions: ["./index.mjs"] } }));
-    fs.writeFileSync(root + "/openclaw.plugin.json", JSON.stringify({ id: "image-worker-probe", configSchema: { type: "object", additionalProperties: false, properties: {} } }));
+    fs.writeFileSync(root + "/openclaw.plugin.json", JSON.stringify({ id: "image-worker-probe", activation: { onStartup: true }, configSchema: { type: "object", additionalProperties: false, properties: {} } }));
     fs.writeFileSync(root + "/index.mjs", `import { writeFileSync } from "node:fs"; export default { id: "image-worker-probe", register(api) { writeFileSync("/data/.openclaw/image-worker-registration.json", JSON.stringify({ pluginId: api.id, source: import.meta.url })); } };`);
   '
-  gateway_cli plugins install /data/image-worker-probe --link --force >/dev/null
+  # This test-authored startup hook is reviewed here; record its capability consent.
+  gateway_cli plugins install /data/image-worker-probe --link --force --accept-capabilities >/dev/null
 }
 
 check_image_worker_probe() {

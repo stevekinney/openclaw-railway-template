@@ -10,6 +10,8 @@ The patch also backports [Doctor's settled preflight reuse](https://github.com/o
 
 Gateway source acquisition prepares up to four independent external plugins at once, bounded by available CPUs. Evaluation, registration, and diagnostics remain in manifest order. Bundled, retained, and recovered plugins form ordering boundaries. Failed or retired loads join pending captures and release their resources before returning; synchronous CLI loads still acquire sources inline. Readiness waits for the complete registry.
 
+Codex declares the individual legacy sidecars and session indexes that its migration can modify, plus the shared SQLite database. Recovery inventory excludes read-only transcripts and unrelated session files, avoiding whole-directory captures. The image build runs this inventory regression alongside the Codex worker checks.
+
 Healthy shared-state maintenance leaves `PRAGMA user_version`, schema metadata, and SQLite bytes unchanged. Real version or ownership repairs still write their metadata and pass the existing admission checks. This removes writes that changed an otherwise healthy database during every maintenance pass.
 
 Deferred legacy config repairs also preserve authored include identities when a configuration directory is addressed through a symlink. Canonical aliases used for file watching do not require duplicate write identities. Missing hashes or targets, source edits, and profile changes still refuse the prepared write.
@@ -39,7 +41,7 @@ When upgrading OpenClaw, update the release image, source commit/archive checksu
 
 ## Image-owned ACPX runtime
 
-The image also builds [ACPX](https://docs.openclaw.ai/plugins/reference/acpx) from the pinned host source. Its production dependencies come from the same source lockfile, with the generated npm lockfile retained beside the plugin. The build replaces the dependency directory completely and verifies ACPX registration, source path, and version through the real host with network access blocked. Missing or mismatched ACPX bundles reject the image.
+The image also builds [ACPX](https://docs.openclaw.ai/plugins/reference/acpx) from the pinned host source. Its production dependencies come from the same source lockfile, with the generated npm lockfile retained beside the plugin. The build replaces the dependency directory completely and verifies ACPX registration, source path, and version through the real host with network access blocked. Missing or mismatched ACPX bundles reject the image. The builder and final runtime both verify their resolved Zod, Undici, and Express body-parser versions. Both companion dependency installs must also pass `npm audit`; warnings cannot silently pass the image build.
 
 For a volume with an older separately installed ACPX package, select the image-owned copy once with `openclaw plugins install acpx --no-enable`. This preserves existing enablement while the supported installer replaces the installation record and package. Preserve ACPX configuration and session state; do not delete its state directory. Read back `openclaw plugins info acpx --json`: the source and installation path must resolve under `/app/dist/extensions/acpx`, and its version must match the host. That stable path follows later image upgrades instead of leaving an older archive on the volume in charge.
 
