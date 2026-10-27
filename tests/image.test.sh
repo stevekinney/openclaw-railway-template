@@ -31,6 +31,7 @@ run_id="openclaw-test-$$"
 network="$run_id-network"
 gateway="$run_id-gateway"
 watchdog="$run_id-watchdog"
+locked_caller="$run_id-locked-caller"
 live="$run_id-live"
 live_twin="$run_id-live-twin"
 live_hostname="openclaw-test-$$"
@@ -53,7 +54,7 @@ cleanup() {
   # ephemeral-node timeout removes them.
   docker exec "$live" as-node tailscale logout >/dev/null 2>&1 || true
   docker exec "$live_twin" as-node tailscale logout >/dev/null 2>&1 || true
-  docker rm -f "$gateway" "$watchdog" "$live" "$live_twin" >/dev/null 2>&1 || true
+  docker rm -f "$gateway" "$watchdog" "$locked_caller" "$live" "$live_twin" >/dev/null 2>&1 || true
   docker volume rm -f "$run_id-state" "$run_id-old-state" "$run_id-gmail-state" "$run_id-live-state" "$run_id-live-twin-state" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
@@ -67,20 +68,8 @@ start_gateway() {
     "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
 }
 
-# Prints the status of a request to the webhook routes on PORT (8080), made from
-# another container on the network, the way Railway's edge delivers it when the
-# service has a domain. Extra arguments are name=value request headers; METHOD
-# overrides POST and BODY_BYTES sends a body of that many bytes.
-relay_status() {
-  path="$1"
-  shift
-  docker run --rm --network "$network" --entrypoint node "$image" -e '
-    const [method, url, size, ...pairs] = process.argv.slice(1);
-    const headers = { "content-type": "application/json", ...Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2))) };
-    const body = method === "POST" ? (Number(size) > 0 ? "x".repeat(Number(size)) : JSON.stringify({ text: "relay test", mode: "next-heartbeat", agentId: "main" })) : undefined;
-    fetch(url, { method, headers, body }).then((response) => console.log(response.status), () => console.log("unreachable"));
-  ' "${METHOD:-POST}" "http://$(container_address "$gateway"):8080$path" "${BODY_BYTES:-0}" "$@"
-}
+. tests/webhook-image.test.sh
+. tests/image-admission.test.sh
 
 container_address() {
   docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$1"
@@ -153,60 +142,12 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then
   pass "the image builds"
 fi
 
+log "startup security"
+sh tests/startup-security.test.sh "$image"
+
 docker network create "$network" >/dev/null
 
-log "versions"
-pinned_version="$(sed -n 's|^FROM ghcr.io/openclaw/openclaw:\([^@]*\)@sha256:.*|\1|p' Dockerfile)"
-installed_version="$(docker run --rm --entrypoint node "$image" /app/openclaw.mjs --version | sed -n 's/^OpenClaw \([^ ]*\).*/\1/p')"
-check "installed OpenClaw ($installed_version) matches the Dockerfile pin ($pinned_version)" \
-  '[ -n "$pinned_version" ] && [ "$pinned_version" = "$installed_version" ]'
-pinned_tailscale="$(sed -n 's|^FROM tailscale/tailscale:v\([^@]*\)@sha256:.* AS tailscale$|\1|p' Dockerfile)"
-installed_tailscale="$(docker run --rm --entrypoint tailscale "$image" version | head -1)"
-check "installed Tailscale ($installed_tailscale) matches the Dockerfile pin ($pinned_tailscale)" \
-  '[ -n "$pinned_tailscale" ] && [ "$pinned_tailscale" = "$installed_tailscale" ]'
-
-patch_digest="$(node -e 'process.stdout.write(require("node:crypto").hash("sha256", require("node:fs").readFileSync("scripts/openclaw-plugin-capture.patch")))')"
-check "activation metadata identifies the exact applied runtime patch" \
-  'docker run --rm --entrypoint node "$image" -e '"'"'
-    const information = require("/app/dist/build-info.json");
-    require("node:assert/strict").equal(information.railwayPatchDigest, process.argv[1]);
-  '"'"' "$patch_digest"'
-routing_patch_digest="$(sed -n 's|^ADD --checksum=sha256:\([a-f0-9]*\) https://raw.githubusercontent.com/stevekinney/openclaw-plugin-slack-workspace/.*|\1|p' Dockerfile)"
-check "the image identifies the exact pinned Slack routing patch" \
-  'docker run --rm --entrypoint node "$image" -e '"'"'
-    const information = require("/app/dist/build-info.json");
-    const assert = require("node:assert/strict");
-    assert.equal(information.slackRoutingContractVersion, 1);
-    assert.equal(information.slackRoutingPatchDigest, process.argv[1]);
-  '"'"' "$routing_patch_digest"'
-check "the real host registers a plugin against the Slack routing contract" \
-  'docker run --rm --entrypoint node "$image" /usr/local/lib/openclaw-railway/check-slack-routing.ts runtime /app /etc/openclaw-slack-routing.patch'
-check "the image defaults disposable inspection snapshots to container storage" \
-  'docker run --rm --entrypoint node "$image" -e '"'"'
-    require("node:assert/strict").equal(process.env.XDG_CACHE_HOME, "/tmp");
-  '"'"''
-
-check "runtime contains exactly the rebuilt artifacts and production plugin links" \
-  'docker run --rm --entrypoint node "$image" -e '"'"'
-    const fs = require("node:fs");
-    const assert = require("node:assert/strict");
-    const expected = JSON.parse(fs.readFileSync("/app/openclaw-build-files.json", "utf8"));
-    const actual = fs.readdirSync("/app/dist", { recursive: true }).toSorted();
-    assert.deepEqual(actual, expected);
-    for (const file of actual) {
-      const pathname = "/app/dist/" + file;
-      if (fs.lstatSync(pathname).isSymbolicLink()) assert.ok(fs.existsSync(pathname), "broken production dependency: " + file);
-    }
-  '"'"''
-
-check "Control UI assets match the runtime build identity" \
-  'docker run --rm --entrypoint node "$image" -e '"'"'
-    const fs = require("node:fs");
-    const runtime = JSON.parse(fs.readFileSync("/app/dist/build-info.json", "utf8"));
-    const html = fs.readFileSync("/app/dist/control-ui/index.html", "utf8");
-    const identity = html.match(/data-openclaw-control-ui-build-id="([a-zA-Z0-9._-]+)-[a-f0-9]{64}"/u)?.[1];
-    if (!identity || identity !== runtime.buildId) throw new Error("Control UI build identity differs from runtime");
-  '"'"''
+run_image_admission_checks
 
 log "bundled tools"
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
@@ -363,39 +304,7 @@ audit_problems() {
 check "the security audit has no critical findings and no warnings beyond trusted_proxies_missing" \
   '[ "$(audit_problems)" = "warn gateway.trusted_proxies_missing" ]'
 
-log "webhook routes on PORT (public only with a Railway domain)"
-gateway_cli config set hooks.enabled true >/dev/null 2>&1
-gateway_cli config set hooks.token '${OPENCLAW_HOOKS_TOKEN}' >/dev/null 2>&1
-gateway_cli config set hooks.allowedAgentIds '["main"]' --strict-json >/dev/null 2>&1
-attempt=0
-until [ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 200 ] || [ "$attempt" -ge 20 ]; do
-  sleep 1
-  attempt=$((attempt + 1))
-done
-check "a hook with the token in an Authorization header reaches the Gateway (200)" \
-  '[ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 200 ]'
-check "a hook with the token in x-openclaw-token reaches the Gateway (200)" \
-  '[ "$(relay_status /hooks/wake "x-openclaw-token=$hooks_token")" = 200 ]'
-check "a hook with the token as the last path segment reaches the Gateway (200)" \
-  '[ "$(relay_status "/hooks/wake/$hooks_token")" = 200 ]'
-check "a hook without the token is refused by the relay (401)" '[ "$(relay_status /hooks/wake)" = 401 ]'
-check "a hook with a wrong path token is refused (401)" '[ "$(relay_status /hooks/wake/not-the-token)" = 401 ]'
-check "spoofed forwarded and Tailscale identity headers are stripped, not trusted (200)" \
-  '[ "$(relay_status /hooks/wake "authorization=Bearer $hooks_token" tailscale-user-login=someone@example.com x-forwarded-for=100.64.0.9)" = 200 ]'
-check "GET is refused (404)" '[ "$(METHOD=GET relay_status /hooks/wake)" = 404 ]'
-for path in / /control-ui-config.json /v1/models; do
-  check "the relay refuses $path (404)" '[ "$(relay_status "$path" "authorization=Bearer $hooks_token")" = 404 ]'
-done
-check "the relay refuses a path that climbs out of /hooks (404)" \
-  '[ "$(relay_status "/hooks/../control-ui-config.json/$hooks_token")" = 404 ]'
-check "a body over 1 MiB is refused (413)" \
-  '[ "$(BODY_BYTES=2000000 relay_status /hooks/wake "authorization=Bearer $hooks_token")" = 413 ]'
-for attempt in $(seq 1 20); do relay_status /hooks/wake x-forwarded-for=203.0.113.7 >/dev/null; done
-check "20 failures from one caller lock that caller out (429)" \
-  '[ "$(relay_status /hooks/wake x-forwarded-for=203.0.113.7 "authorization=Bearer $hooks_token")" = 429 ]'
-check "other callers are not locked out" \
-  '[ "$(relay_status /hooks/wake x-forwarded-for=198.51.100.2 "authorization=Bearer $hooks_token")" = 200 ]'
-check "health checks still work alongside webhook routes" '[ "$(remote_status /healthz)" = 200 ]'
+run_webhook_image_checks
 
 log "state survives a restart"
 # /proc/1/environ belongs to node, so read it as node.

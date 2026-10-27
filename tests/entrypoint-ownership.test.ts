@@ -17,8 +17,6 @@ function runOwnershipRepair(failure = "") {
       writeFileSync(filename, `#!/bin/sh\nset -eu\n${source}\n`);
       chmodSync(filename, 0o755);
     };
-    executable("id", "echo 0");
-    for (const name of ["mountpoint", "install", "chown"]) executable(name, "exit 0");
     executable("node", `
 case "$1" in
   *tailscale-hostname.mjs) echo openclaw ;;
@@ -55,7 +53,19 @@ done
 case "$job" in state) sleep 0.04 ;; home) sleep 0.02 ;; esac
 touch "$OWNERSHIP_TEST_DIRECTORY/finished-$job"
 [ "$OWNERSHIP_TEST_FAILURE" != "$job" ] || exit 42`);
-    const result = spawnSync("sh", [entrypoint], {
+    // Exercise the exact ownership barrier independently of privileged startup.
+    // Full image security tests cover the immutable root PATH and admission flow.
+    const source = readFileSync(entrypoint, "utf8");
+    const start = source.indexOf('ownership_process_identifiers=""');
+    const end = source.indexOf('\nif [ ! -e "$config_file" ]', start);
+    assert.ok(start >= 0 && end > start, "entrypoint ownership barrier must exist");
+    const ownership = `set -eu
+fail() { exit 64; }
+state_directory="$OPENCLAW_HOME/.openclaw"
+${source.slice(start, end)}
+node -e ownership-complete
+`;
+    const result = spawnSync("sh", ["-c", ownership], {
       encoding: "utf8",
       env: {
         PATH: `${binaries}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -94,8 +104,7 @@ test("all volume ownership walks overlap and finish before configuration admissi
   assert.equal(result.error, undefined);
   assert.deepEqual(result.completed, ["state", "home", "tailscale"]);
   assert.equal(result.continued, true);
-  // The fixture deliberately selects the existing old-layout refusal after the ownership barrier.
-  assert.equal(result.status, 64);
+  assert.equal(result.status, 0);
 });
 
 for (const root of ["state", "home", "tailscale"]) {

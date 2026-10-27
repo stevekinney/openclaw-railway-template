@@ -10,13 +10,17 @@
 # deletes or rewrites existing state.
 set -eu
 
+# Volume-installed tools are untrusted until privileges have been dropped.
+runtime_path="$PATH"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 fail() {
   printf 'openclaw-railway: %s\n' "$*" >&2
   exit 64
 }
 
 as_node() {
-  setpriv --reuid=node --regid=node --init-groups -- "$@"
+  setpriv --reuid=node --regid=node --init-groups -- env PATH="$runtime_path" "$@"
 }
 
 [ "$(id -u)" = 0 ] || fail "the entrypoint must start as root so it can prepare the volume; it drops to the node user itself. Remove any RAILWAY_RUN_UID or --user override."
@@ -51,6 +55,19 @@ without_tailscale="${OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE:-}"
 
 state_directory="$OPENCLAW_HOME/.openclaw"
 config_file="$state_directory/openclaw.json"
+
+# Refuse redirected state paths before root changes ownership or creates files.
+# Check ancestors too: a nested path must not hide a symlink on the volume.
+for managed_directory in "$OPENCLAW_HOME" "$state_directory" "$HOME" "$TS_STATE_DIR" /data/linuxbrew "$(dirname "$TS_SOCKET")"; do
+  directory="$managed_directory"
+  while [ "$directory" != / ] && [ "$directory" != . ]; do
+    # /var/run is the image's root-owned alias for /run, used by Tailscale.
+    if [ "$directory" != /var/run ] && [ -L "$directory" ]; then
+      fail "$managed_directory contains a symbolic link ($directory); restore a real state directory before restarting."
+    fi
+    directory="$(dirname "$directory")"
+  done
+done
 
 if ! mountpoint -q "$OPENCLAW_HOME"; then
   printf 'openclaw-railway: warning: %s is not a mounted volume; all OpenClaw state will be lost when this container is replaced.\n' "$OPENCLAW_HOME" >&2
@@ -118,7 +135,7 @@ fi
 # token, so neither gets them.
 # (setpriv directly, not as_node: a backgrounded function leaves a root shell.)
 setpriv --reuid=node --regid=node --init-groups -- \
-  env -u TS_AUTHKEY -u OPENCLAW_GATEWAY_TOKEN node /usr/local/lib/openclaw-railway/sidecar.mjs &
+  env -u TS_AUTHKEY -u OPENCLAW_GATEWAY_TOKEN PATH="$runtime_path" node /usr/local/lib/openclaw-railway/sidecar.mjs &
 
 if [ -z "$without_tailscale" ]; then
   backend_state() {
@@ -182,4 +199,4 @@ if [ -z "$without_tailscale" ]; then
 fi
 unset TS_AUTHKEY
 
-exec setpriv --reuid=node --regid=node --init-groups -- "$@"
+exec setpriv --reuid=node --regid=node --init-groups -- env PATH="$runtime_path" "$@"

@@ -33,11 +33,7 @@ flowchart LR
   relay checks the token itself and forwards only authenticated requests.
 - `POST /gmail-pubsub?token=<push token>` goes to OpenClaw's Gmail watcher,
   which checks its own push token and then calls `/hooks/gmail` over loopback.
-- Every other path and method is 404. Bodies over 1 MiB get 413. After 20
-  failed attempts in a minute, a caller is locked out for 10 minutes (429),
-  keyed on the address Railway's edge reports (`X-Real-IP`), which callers
-  can't spoof. Forwarded, Railway, and Tailscale headers are stripped before
-  anything reaches the Gateway.
+- Every other path and method is 404; malformed request targets get 400. Bodies over 1 MiB get 413. After 20 failed attempts in a minute, the connecting socket address is locked out for 10 minutes (429). Forwarding headers do not determine lockout identity: direct callers on Railway's private network can forge them. Public senders sharing a Railway edge address may share a lockout. Forwarded, Railway, and Tailscale headers are stripped before anything reaches the Gateway.
 - The health checks (`/healthz`, `/readyz`, `/startupz`) are public on that
   domain too. They return only an aggregate status.
 
