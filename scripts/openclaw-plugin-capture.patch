@@ -1,5 +1,5 @@
 diff --git a/docker-entrypoint.mjs b/docker-entrypoint.mjs
-index 3abe74e9f8..518346f798 100644
+index 3abe74e9f8..660a6ed828 100644
 --- a/docker-entrypoint.mjs
 +++ b/docker-entrypoint.mjs
 @@ -1,10 +1,14 @@
@@ -95,7 +95,7 @@ index 3abe74e9f8..518346f798 100644
    } else {
      return undefined;
    }
-@@ -66,7 +115,171 @@ function gatewayInvocation(program) {
+@@ -66,7 +115,172 @@ function gatewayInvocation(program) {
      mode: "command-path",
    });
    // Reset owns deletion before initialization; do not migrate state it will discard.
@@ -157,6 +157,7 @@ index 3abe74e9f8..518346f798 100644
 +    .update(fs.readFileSync(path.join(root, "dist/build-info.json")))
 +    .update(fs.readFileSync(fileURLToPath(import.meta.url)))
 +    .update(JSON.stringify(invocation.rootOptions))
++    .update(JSON.stringify(invocation.selectedPlugins))
 +    .update(
 +      JSON.stringify([
 +        fs.realpathSync(process.cwd()),
@@ -268,7 +269,7 @@ index 3abe74e9f8..518346f798 100644
  }
 
  try {
-@@ -75,45 +288,83 @@ try {
+@@ -75,45 +289,83 @@ try {
      console.error("OpenClaw container activation command was not found");
      process.exit(127);
    }
@@ -281,7 +282,7 @@ index 3abe74e9f8..518346f798 100644
 +    validateSelectedBundles(invocation.selectedPlugins);
 +  }
 +  const activation = invocation && imageActivation(invocation);
-+  if (invocation && (invocation.selectedPlugins.length || !activationCompleted(activation))) {
++  if (invocation && !activationCompleted(activation)) {
      let interrupted;
 -    let child;
 +    let activeChild;
@@ -1998,6 +1999,175 @@ index 62f8958462..334ee5a663 100644
    },
    "exports": {
      ".": {
+diff --git a/packages/worker-runtime/src/worker-task-server.test.ts b/packages/worker-runtime/src/worker-task-server.test.ts
+new file mode 100644
+index 0000000000..0b30bc4bd1
+--- /dev/null
++++ b/packages/worker-runtime/src/worker-task-server.test.ts
+@@ -0,0 +1,120 @@
++import { EventEmitter } from "node:events";
++import { setImmediate as nextTurn } from "node:timers/promises";
++import { afterEach, expect, it, vi } from "vitest";
++
++const parentPort = new EventEmitter() as EventEmitter & {
++  postMessage: ReturnType<typeof vi.fn>;
++};
++parentPort.postMessage = vi.fn();
++
++vi.mock("node:worker_threads", async (importOriginal) => ({
++  ...(await importOriginal<typeof import("node:worker_threads")>()),
++  parentPort,
++}));
++
++const { serveOwnedWorkerTasks } = await import("./worker-task-server.js");
++
++function host() {
++  return {
++    initialize: vi.fn(),
++    onMessage: vi.fn(),
++    installTaskContext: vi.fn(),
++    onIdle: vi.fn(),
++  };
++}
++
++function task(taskId: number, input: unknown) {
++  return {
++    input,
++    taskId,
++    nativeSections: new SharedArrayBuffer(4),
++    taskContext: undefined,
++  };
++}
++
++async function settle() {
++  await nextTurn();
++  await nextTurn();
++}
++
++afterEach(() => {
++  parentPort.removeAllListeners();
++  parentPort.postMessage.mockClear();
++  vi.restoreAllMocks();
++});
++
++it("notifies after successful and failed replies without duplicating response frames", async () => {
++  const replies = vi.fn();
++  const idle = vi.fn();
++  const onReplySent = vi.fn(replies);
++  serveOwnedWorkerTasks(
++    async (input) => {
++      if (input === "failure") {
++        throw new Error("synthetic failure");
++      }
++      return input;
++    },
++    { onReplySent },
++    { ...host(), onIdle: idle },
++  );
++
++  parentPort.emit("message", task(1, "success"));
++  await settle();
++  parentPort.emit("message", task(2, "failure"));
++  await settle();
++
++  expect(parentPort.postMessage).toHaveBeenCalledTimes(2);
++  expect(parentPort.postMessage.mock.calls.map(([message]) => message.status)).toEqual([
++    "ok",
++    "failed",
++  ]);
++  expect(onReplySent).toHaveBeenCalledTimes(2);
++  expect(replies).toHaveBeenCalledTimes(2);
++  expect(idle).toHaveBeenCalledTimes(2);
++  for (let index = 0; index < 2; index += 1) {
++    expect(onReplySent.mock.invocationCallOrder[index]).toBeGreaterThan(
++      parentPort.postMessage.mock.invocationCallOrder[index]!,
++    );
++    expect(idle.mock.invocationCallOrder[index]).toBeGreaterThan(
++      onReplySent.mock.invocationCallOrder[index]!,
++    );
++  }
++});
++
++it.each([false, true])("notifies and closes resource receipts after failure=%s", async (fails) => {
++  const idle = vi.fn();
++  const onReplySent = vi.fn();
++  const closeResource = vi.fn(async () => {
++    if (fails) {
++      throw new Error("resource cleanup failed");
++    }
++  });
++  const receipt = { postMessage: vi.fn(), close: vi.fn() };
++  serveOwnedWorkerTasks(
++    async (input) => input,
++    { closeResource, onReplySent },
++    { ...host(), onIdle: idle },
++  );
++
++  parentPort.emit("message", {
++    closeResource: true,
++    key: "resource-key",
++    resourcePort: receipt,
++  });
++  await settle();
++
++  expect(closeResource).toHaveBeenCalledWith("resource-key");
++  expect(receipt.postMessage).toHaveBeenCalledOnce();
++  expect(receipt.postMessage.mock.calls[0]?.[0]).toMatchObject(
++    fails ? { ok: false, error: "resource cleanup failed" } : { ok: true },
++  );
++  expect(receipt.close).toHaveBeenCalledOnce();
++  expect(onReplySent).toHaveBeenCalledOnce();
++  expect(idle).toHaveBeenCalledOnce();
++  expect(onReplySent.mock.invocationCallOrder[0]).toBeGreaterThan(
++    receipt.postMessage.mock.invocationCallOrder[0]!,
++  );
++  expect(onReplySent.mock.invocationCallOrder[0]).toBeGreaterThan(
++    receipt.close.mock.invocationCallOrder[0]!,
++  );
++});
+diff --git a/packages/worker-runtime/src/worker-task-server.ts b/packages/worker-runtime/src/worker-task-server.ts
+index 287cc4875b..0b87239caf 100644
+--- a/packages/worker-runtime/src/worker-task-server.ts
++++ b/packages/worker-runtime/src/worker-task-server.ts
+@@ -47,6 +47,8 @@ export function serveOwnedWorkerTasks<Output, TaskContext>(
+     transferList?: (value: Output) => Transferable[];
+     closeResource?: (key?: string) => void | Promise<void>;
+     encodeResourceError?: (error: unknown) => unknown;
++    /** Wake a synchronous consumer only after its reply or resource receipt is queued. */
++    onReplySent?: () => void;
+   },
+   host: WorkerTaskServerHost<TaskContext>,
+ ): void {
+@@ -111,8 +113,12 @@ export function serveOwnedWorkerTasks<Output, TaskContext>(
+           })
+           .finally(() => {
+             receipt.close();
+-            if (!active) {
+-              host.onIdle();
++            try {
++              options.onReplySent?.();
++            } finally {
++              if (!active) {
++                host.onIdle();
++              }
+             }
+           });
+         return;
+@@ -247,7 +253,13 @@ export function serveOwnedWorkerTasks<Output, TaskContext>(
+             error: error instanceof Error ? error.message : String(error),
+           });
+         })
+-        .finally(() => host.onIdle());
++        .finally(() => {
++          try {
++            options.onReplySent?.();
++          } finally {
++            host.onIdle();
++          }
++        });
+     },
+   );
+   host.onReady?.();
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
 index 5798d3b83b..5b3aa91e5f 100644
 --- a/pnpm-lock.yaml
@@ -9012,6 +9182,18 @@ index 0000000000..6a858f6af0
 +  }
 +  return { retired, warnings };
 +}
+diff --git a/src/infra/worker-task-server.ts b/src/infra/worker-task-server.ts
+index 58639a7c72..47601b1289 100644
+--- a/src/infra/worker-task-server.ts
++++ b/src/infra/worker-task-server.ts
+@@ -38,6 +38,7 @@ export function serveOwnedWorkerTasks<Output>(
+     transferList?: (value: Output) => Transferable[];
+     closeResource?: (key?: string) => void | Promise<void>;
+     encodeResourceError?: (error: unknown) => unknown;
++    onReplySent?: () => void;
+   } = {},
+ ): void {
+   let memoryPort: MessagePort;
 diff --git a/src/plugins/capability-provider-runtime.generation.test.ts b/src/plugins/capability-provider-runtime.generation.test.ts
 index 8cd3059b39..76c6abae8e 100644
 --- a/src/plugins/capability-provider-runtime.generation.test.ts
@@ -13571,10 +13753,10 @@ index 0000000000..1c3855fac4
 +}
 diff --git a/src/plugins/plugin-generation-preparation.worker.ts b/src/plugins/plugin-generation-preparation.worker.ts
 new file mode 100644
-index 0000000000..9d2b3db9d7
+index 0000000000..e3d1fbb81a
 --- /dev/null
 +++ b/src/plugins/plugin-generation-preparation.worker.ts
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,298 @@
 +import { receiveMessageOnPort, type MessagePort } from "node:worker_threads";
 +import { serveOwnedWorkerTasks } from "../infra/worker-task-server.js";
 +import { withArtifactPreservingStateReads } from "../state/openclaw-state-db-readonly.js";
@@ -13669,6 +13851,13 @@ index 0000000000..9d2b3db9d7
 +let context: Extract<GenerationWorkerInput, { operation: "capture" }> | undefined;
 +let callbacks: MessagePort | undefined;
 +let nextCallback = 0;
++function notifyHost(): void {
++  const signal = context?.hostActivity;
++  if (signal) {
++    Atomics.add(signal, 0, 1);
++    Atomics.notify(signal, 0);
++  }
++}
 +const publications = new Map<
 +  number,
 +  { resolve(value: boolean): void; reject(error: Error): void }
@@ -13684,6 +13873,7 @@ index 0000000000..9d2b3db9d7
 +      { kind: "publish", id, publication } satisfies GenerationWorkerCallback,
 +      [],
 +    );
++    notifyHost();
 +  });
 +}
 +function observe(message: GenerationWorkerCallback): void {
@@ -13716,6 +13906,7 @@ index 0000000000..9d2b3db9d7
 +    } satisfies GenerationWorkerCallback,
 +    [],
 +  );
++  notifyHost();
 +  const deadline = performance.now() + 15_000;
 +  for (;;) {
 +    // SAFETY: This private port is transferred only to the matching host callback protocol.
@@ -13862,7 +14053,7 @@ index 0000000000..9d2b3db9d7
 +      }
 +    });
 +  },
-+  { closeResource: () => scoped(close) },
++  { closeResource: () => scoped(close), onReplySent: notifyHost },
 +);
 diff --git a/src/plugins/plugin-generation-receipt.ts b/src/plugins/plugin-generation-receipt.ts
 index 5d2fcffc21..68d4c38697 100644
@@ -15071,10 +15262,10 @@ index 0000000000..3fea4bf928
 +}
 diff --git a/src/plugins/plugin-generation-worker-contract.ts b/src/plugins/plugin-generation-worker-contract.ts
 new file mode 100644
-index 0000000000..131cbcc5f6
+index 0000000000..8e4fd10458
 --- /dev/null
 +++ b/src/plugins/plugin-generation-worker-contract.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +import type { MessagePort } from "node:worker_threads";
 +import type { PluginInstallRoots } from "./install-root-context.js";
 +import type { GenerationWireValue } from "./plugin-generation-worker-codec.js";
@@ -15098,6 +15289,7 @@ index 0000000000..131cbcc5f6
 +        "owners" | "managedRoots" | "receipts" | "files" | "namespaces"
 +      >;
 +      callbackPort?: MessagePort;
++      hostActivity: Int32Array<SharedArrayBuffer>;
 +    }
 +  | { operation: "call"; handle: number; args: GenerationWireValue[]; asynchronous: boolean }
 +  | { operation: "close" }
@@ -15111,6 +15303,93 @@ index 0000000000..131cbcc5f6
 +  | { kind: "mapping"; id: number; captureId: number; filename: string; signal: Int32Array }
 +  | { kind: "mapped"; id: number; filename?: string; error?: string }
 +  | { kind: "native-load"; filename: string };
+diff --git a/src/plugins/plugin-generation-worker.notifications.test.ts b/src/plugins/plugin-generation-worker.notifications.test.ts
+new file mode 100644
+index 0000000000..aa2c2970fc
+--- /dev/null
++++ b/src/plugins/plugin-generation-worker.notifications.test.ts
+@@ -0,0 +1,81 @@
++import fs from "node:fs";
++import path from "node:path";
++import { afterEach, expect, it, vi } from "vitest";
++import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
++import { createFixture } from "./plugin-generation-artifact.admission.test-support.js";
++import { preparePluginGenerationArtifact } from "./plugin-generation-worker.js";
++import { withPluginSourceCaptureStorage } from "./plugin-source-capture-context.js";
++
++const temporaryDirectories = useAutoCleanupTempDirTracker(afterEach);
++
++afterEach(() => {
++  vi.restoreAllMocks();
++});
++
++it("wakes synchronous joins for mapping and ordinary replies instead of timing out each poll", async () => {
++  const root = fs.realpathSync(temporaryDirectories.make("plugin-worker-notification-"));
++  const fixture = createFixture(path.join(root, "installed"), false);
++  const waits: string[] = [];
++  const expectedCounters: number[] = [];
++  let collecting = false;
++  let raced = false;
++  const wait = Atomics.wait;
++  vi.spyOn(Atomics, "wait").mockImplementation((...arguments_) => {
++    const [activity, index, expected, timeout] = arguments_;
++    if (collecting && timeout === 2) {
++      expectedCounters.push(Number(expected));
++      // Deliver activity in the actual join after its pending read and before its wait.
++      if (!raced && activity instanceof Int32Array) {
++        Atomics.add(activity, index, 1);
++        raced = true;
++        const outcome = Reflect.apply(wait, Atomics, arguments_);
++        expect(outcome).toBe("not-equal");
++        waits.push(outcome);
++        return outcome;
++      }
++    }
++    const outcome = Reflect.apply(wait, Atomics, arguments_);
++    if (collecting && timeout === 2) {
++      waits.push(outcome);
++    }
++    return outcome;
++  });
++
++  await withPluginSourceCaptureStorage({ stateDir: root, placement: "temporary" }, async () => {
++    const prepared = await preparePluginGenerationArtifact({
++      rootDir: fixture.root,
++      source: fixture.entry,
++    });
++    try {
++      collecting = true;
++      for (let index = 0; index < 24; index += 1) {
++        prepared.artifact.prepareModule(prepared.artifact.resolve(fixture.entry));
++        prepared.artifact.prepareNativeScopes();
++      }
++    } finally {
++      collecting = false;
++      await prepared.artifact.disposeAsync();
++    }
++  });
++
++  expect(raced).toBe(true);
++  expect(expectedCounters.length).toBeGreaterThan(0);
++  expect(expectedCounters.every((counter) => counter > 0)).toBe(true);
++  expect(expectedCounters.at(-1)).toBeGreaterThan(expectedCounters[0]! + 1);
++  expect(waits.some((outcome) => outcome === "ok" || outcome === "not-equal")).toBe(true);
++  expect(waits.filter((outcome) => outcome === "timed-out").length).toBeLessThan(waits.length);
++});
++
++it("keeps worker rejection and cleanup observable through the notification path", async () => {
++  const root = fs.realpathSync(temporaryDirectories.make("plugin-worker-notification-failure-"));
++  const fixture = createFixture(path.join(root, "installed"), false);
++
++  await withPluginSourceCaptureStorage({ stateDir: root, placement: "temporary" }, async () => {
++    await expect(
++      preparePluginGenerationArtifact({
++        rootDir: path.join(fixture.root, "missing"),
++        source: fixture.entry,
++      }),
++    ).rejects.toThrow();
++  });
++});
 diff --git a/src/plugins/plugin-generation-worker.test.ts b/src/plugins/plugin-generation-worker.test.ts
 new file mode 100644
 index 0000000000..5c473f909b
@@ -15506,10 +15785,10 @@ index 0000000000..5c473f909b
 +});
 diff --git a/src/plugins/plugin-generation-worker.ts b/src/plugins/plugin-generation-worker.ts
 new file mode 100644
-index 0000000000..c3842f3357
+index 0000000000..21625bf8ce
 --- /dev/null
 +++ b/src/plugins/plugin-generation-worker.ts
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,291 @@
 +import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
 +import { runtimeProcessEntrypoints } from "../infra/runtime-process-entrypoints.js";
 +import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
@@ -15710,6 +15989,8 @@ index 0000000000..c3842f3357
 +        | { status: "rejected"; error: unknown };
 +    }): T => {
 +      for (;;) {
++        // A reply queued during servicing must make the following wait return immediately.
++        const activity = Atomics.load(waitSignal, 0);
 +        operation.service();
 +        // SAFETY: This private port receives only the matching worker callback protocol.
 +        const message = receiveMessageOnPort(port1)?.message as
@@ -15725,7 +16006,7 @@ index 0000000000..c3842f3357
 +        if (outcome.status === "rejected") {
 +          throw outcome.error;
 +        }
-+        Atomics.wait(waitSignal, 0, 0, 2);
++        Atomics.wait(waitSignal, 0, activity, 2);
 +      }
 +    };
 +    try {
@@ -15773,6 +16054,7 @@ index 0000000000..c3842f3357
 +          scratch: root.directory,
 +          managedRoot: root.managedRoot,
 +          callbackPort,
++          hostActivity: waitSignal,
 +          admission: {
 +            owners: admission.owners,
 +            managedRoots: admission.managedRoots,
@@ -17893,7 +18175,7 @@ index b3f00ad782..9dc44d2930 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0d1..bcf7396ac9 100644
+index 8e84f7f0d1..e6caa290cd 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
 @@ -11,12 +11,24 @@ function fixture(command: CommandFixture) {
@@ -17940,7 +18222,7 @@ index 8e84f7f0d1..bcf7396ac9 100644
    const record = path.join(root, "calls.jsonl");
    const runCommand = (argv: string[], env: Record<string, string> = {}) =>
      command.run(process.execPath, [path.join(root, "docker-entrypoint.mjs"), ...argv], {
-@@ -54,10 +66,285 @@ if (args.includes('doctor')) {
+@@ -54,10 +66,318 @@ if (args.includes('doctor')) {
      runCommand,
      run: (args: string[], env: Record<string, string> = {}) =>
        runCommand([process.execPath, ...args], env),
@@ -18092,7 +18374,7 @@ index 8e84f7f0d1..bcf7396ac9 100644
 +    },
 +  );
 +
-+  it("forces selected activation even when the image receipt is already valid", async ({
++  it("activates changed selections once and admits identical selector restarts", async ({
 +    command,
 +  }) => {
 +    const f = fixture(command);
@@ -18103,13 +18385,46 @@ index 8e84f7f0d1..bcf7396ac9 100644
 +      (await f.run(["openclaw.mjs", "--select-bundled-plugin", "alpha", "gateway"], environment))
 +        .status,
 +    ).toBe(0);
++    const selectedReceipt = fs.readFileSync(receipt, "utf8");
++    expect(
++      (await f.run(["openclaw.mjs", "--select-bundled-plugin", "alpha", "gateway"], environment))
++        .status,
++    ).toBe(0);
++    expect(fs.readFileSync(receipt, "utf8")).toBe(selectedReceipt);
 +    expect(f.read().map((row) => row.args)).toEqual([
 +      ["doctor", "--fix", "--non-interactive"],
 +      ["gateway"],
 +      ["plugins", "install", "alpha", "--no-enable"],
 +      ["doctor", "--fix", "--non-interactive"],
 +      ["gateway"],
++      ["gateway"],
 +    ]);
++    for (const selection of [["alpha", "beta"], ["beta", "alpha"], ["alpha"]]) {
++      const gatewayArguments = [
++        "openclaw.mjs",
++        ...selection.flatMap((id) => ["--select-bundled-plugin", id]),
++        "gateway",
++      ];
++      expect((await f.run(gatewayArguments, environment)).status).toBe(0);
++      expect(
++        f
++          .read()
++          .slice(-selection.length - 2)
++          .map((row) => row.args),
++      ).toEqual([
++        ...selection.map((id) => ["plugins", "install", id, "--no-enable"]),
++        ["doctor", "--fix", "--non-interactive"],
++        ["gateway"],
++      ]);
++      const before = f.read().length;
++      expect((await f.run(gatewayArguments, environment)).status).toBe(0);
++      expect(
++        f
++          .read()
++          .slice(before)
++          .map((row) => row.args),
++      ).toEqual([["gateway"]]);
++    }
 +  });
 +
 +  it.for([
@@ -18226,7 +18541,7 @@ index 8e84f7f0d1..bcf7396ac9 100644
    it.for([
      { args: ["openclaw.mjs", "gateway"], rootOptions: [] },
      { args: ["openclaw", "gateway"], rootOptions: [], installed: true },
-@@ -70,6 +357,7 @@ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
+@@ -70,6 +390,7 @@ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
      { args: ["openclaw.mjs", "--dev", "gateway"], rootOptions: ["--dev"] },
      { args: ["openclaw.mjs", "gateway", "--dev"], rootOptions: [] },
      { args: ["openclaw.mjs", "gateway", "--token", "--reset"], rootOptions: [] },
