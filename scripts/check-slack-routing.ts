@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { createRequire } from "node:module";
 
 function readObject(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -25,6 +26,9 @@ export function verifyRuntimeMetadata(root: string, patch: string): void {
   assert.equal(information.version, readObject(join(root, "package.json")).version);
   assert.equal(information.slackRoutingContractVersion, 1, "The image lost its Slack routing contract.");
   assert.equal(information.slackRoutingPatchDigest, createHash("sha256").update(readFileSync(patch)).digest("hex"));
+  assert.equal(readObject(join(root, "dist/extensions/acpx/package.json")).version, information.version, "The image must contain its matched ACPX runtime.");
+  const zod = createRequire(join(root, "package.json")).resolve("zod/package.json");
+  assert.equal(readObject(zod).version, "4.6.6", "The host Zod dependency must include the approved security fix.");
 }
 
 /** Load an isolated plugin through the real host to verify its runtime routing API. */
@@ -47,9 +51,10 @@ export function verifyRuntimeRegistration(root: string): void {
       } };
     `);
     const bundledSlack = join(root, "dist/extensions/slack");
+    const bundledAcpx = join(root, "dist/extensions/acpx");
     assert.equal(readObject(join(bundledSlack, "package.json")).version, readObject(join(root, "package.json")).version, "The image must contain its matched Slack channel.");
     const configuration = join(directory, "configuration.json");
-    writeFileSync(configuration, JSON.stringify({ channels: { slack: { enabled: true, botToken: "xoxb-test", appToken: "xapp-test" } }, plugins: { allow: ["routing-contract-check", "slack"], load: { paths: [directory, bundledSlack] }, entries: { "routing-contract-check": { enabled: true }, slack: { enabled: true } } } }));
+    writeFileSync(configuration, JSON.stringify({ channels: { slack: { enabled: true, botToken: "xoxb-test", appToken: "xapp-test" } }, plugins: { allow: ["routing-contract-check", "slack", "acpx"], load: { paths: [directory, bundledSlack, bundledAcpx] }, entries: { "routing-contract-check": { enabled: true }, slack: { enabled: true }, acpx: { enabled: true } } } }));
     // Registration must not contact Slack or any other provider during an image build.
     const guard = join(directory, "no-network.mjs");
     writeFileSync(guard, `
@@ -81,7 +86,7 @@ export function verifyRuntimeRegistration(root: string): void {
       assert.throws(() => net.connect({host: 'example.invalid', port: 443}), /Network access/);
       assert.throws(() => dns.lookup('example.invalid', () => {}), /Network access/);
     `], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
-    for (const pluginId of ["routing-contract-check", "slack"]) {
+    for (const pluginId of ["routing-contract-check", "slack", "acpx"]) {
       const output = execFileSync(process.execPath, [join(root, "openclaw.mjs"), "plugins", "info", pluginId, "--runtime", "--json"], {
         cwd: root,
         encoding: "utf8",
@@ -94,9 +99,10 @@ export function verifyRuntimeRegistration(root: string): void {
       assert(plugin && typeof plugin === "object" && "status" in plugin);
       assert.equal(plugin.status, "loaded", "Routing probe did not load in the real host.");
       assert.equal(readObject(receipt).contractVersion, 1, "Runtime registration was not executed.");
-      if (pluginId === "slack") {
+      if (pluginId === "slack" || pluginId === "acpx") {
+        const bundledRoot = pluginId === "slack" ? bundledSlack : bundledAcpx;
         assert("source" in plugin && typeof plugin.source === "string");
-        assert(realpathSync(plugin.source).startsWith(realpathSync(bundledSlack) + sep), "Slack must load from the rebuilt image, not a retained archive.");
+        assert(realpathSync(plugin.source).startsWith(realpathSync(bundledRoot) + sep), `${pluginId} must load from the rebuilt image, not a retained archive.`);
         assert("version" in plugin);
         assert.equal(plugin.version, readObject(join(root, "package.json")).version);
       }

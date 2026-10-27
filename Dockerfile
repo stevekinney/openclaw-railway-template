@@ -6,7 +6,7 @@ FROM node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b34
 # binaries are taken from the official image. Dependabot tracks this pin.
 FROM tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065 AS tailscale
 
-# The release supplies production dependencies and the existing plugin selection.
+# The release supplies the base image and existing plugin selection.
 FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b53fdc01f5108f7db11de38fd0ee6dbe5 AS openclaw-release
 
 # Rebuild the pinned release with the reviewed cold-capture engine fix. Keep the
@@ -34,24 +34,45 @@ RUN git apply --check /tmp/openclaw-plugin-capture.patch \
  && git apply --check /tmp/openclaw-slack-routing.patch \
  && git apply /tmp/openclaw-slack-routing.patch \
  && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));'
-RUN pnpm test src/commands/doctor-config-flow*.test.ts src/flows/doctor-health-contributions.test.ts src/flows/doctor-health-contributions.auth-import-order.test.ts src/flows/doctor-health-contributions.availability.test.ts src/flows/doctor-health-contributions.legacy-state.test.ts src/agents/prepared-model-runtime.startup-registry.test.ts src/agents/prepared-model-runtime.plugin-context.test.ts src/agents/prepared-model-runtime.registry-borrow.test.ts src/plugins/loader.gateway-borrow.test.ts --maxWorkers=1 \
- && pnpm test src/infra/sqlite-snapshot-prefetch.test.ts src/infra/sqlite-snapshot-cow.test.ts src/infra/sqlite-snapshot.file-id.test.ts src/infra/sqlite-snapshot.transfer.test.ts src/infra/update-database-restore.test.ts src/snapshot/git-backup-codec.test.ts src/snapshot/local-repository.test.ts src/infra/update-database-generations.test.ts src/infra/update-database-backup.test.ts src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
+RUN pnpm test src/commands/doctor-config-flow*.test.ts src/flows/doctor-health-contributions.test.ts src/flows/doctor-health-contributions.auth-import-order.test.ts src/flows/doctor-health-contributions.availability.test.ts src/flows/doctor-health-contributions.legacy-state.test.ts src/agents/prepared-model-runtime.startup-registry.test.ts src/agents/prepared-model-runtime.plugin-context.test.ts src/agents/prepared-model-runtime.registry-borrow.test.ts src/plugins/loader.gateway-borrow.test.ts src/plugins/loader.async-preparation.test.ts src/gateway/server-plugins.test.ts src/gateway/server-startup-plugins.test.ts src/gateway/server-plugin-reload-recovery.test.ts --maxWorkers=1 \
+ && pnpm test src/infra/sqlite-snapshot-prefetch.test.ts src/infra/sqlite-snapshot-cow.test.ts src/infra/sqlite-snapshot.file-id.test.ts src/infra/sqlite-snapshot.transfer.test.ts src/infra/update-database-restore.test.ts src/snapshot/git-backup-codec.test.ts src/snapshot/local-repository.test.ts src/infra/update-database-generations.test.ts src/infra/update-database-backup.test.ts src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-worker-codec.test.ts src/plugins/plugin-generation-worker.test.ts src/plugins/doctor-contract-registry.custody.test.ts src/state/openclaw-state-db-publication-authority.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
  && pnpm test extensions/codex/worker-entry-contract.test.ts extensions/codex/session-history-worker-runtime.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs src/plugins/hooks.resolve-inbound-route.test.ts src/channels/session.test.ts src/infra/outbound/session-context.test.ts src/infra/system-events.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs --config test/vitest/vitest.extension-slack.config.ts --maxWorkers=1
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
 RUN set -eu; \
-    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack"])].join(" "))')"; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack", "acpx"])].join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
-    node --import ./scripts/tsx.mjs --input-type=module -e 'import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { generateNpmPackageLock, packageJsonForNpmLock, readNpmLockOverrides } from "./scripts/generate-npm-package-lock.mts"; import { resolveNpmRunner } from "./scripts/npm-runner.mts"; const directory = "/tmp/slack-production-dependencies"; fs.mkdirSync(directory); const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync("extensions/slack/package.json", "utf8")); const manifest = { name, version, dependencies, optionalDependencies }; fs.writeFileSync(directory + "/package.json", JSON.stringify(packageJsonForNpmLock(manifest, readNpmLockOverrides(manifest, directory)))); fs.writeFileSync(directory + "/package-lock.json", generateNpmPackageLock(directory, { installStrategy: "shallow" })); const runner = resolveNpmRunner({ npmArgs: ["ci", "--install-strategy=shallow", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-fund", "--workspaces=false"] }); execFileSync(runner.command, runner.args, { cwd: directory, stdio: "inherit" });'; \
+    node --import ./scripts/tsx.mjs --input-type=module -e 'import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { generateNpmPackageLock, packageJsonForNpmLock, readNpmLockOverrides } from "./scripts/generate-npm-package-lock.mts"; import { resolveNpmRunner } from "./scripts/npm-runner.mts"; for (const plugin of ["slack", "acpx"]) { const directory = "/tmp/" + plugin + "-production-dependencies"; fs.mkdirSync(directory); const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync("extensions/" + plugin + "/package.json", "utf8")); const manifest = { name, version, dependencies, optionalDependencies }; fs.writeFileSync(directory + "/package.json", JSON.stringify(packageJsonForNpmLock(manifest, readNpmLockOverrides(manifest, directory)))); fs.writeFileSync(directory + "/package-lock.json", generateNpmPackageLock(directory, { installStrategy: "shallow" })); const runner = resolveNpmRunner({ npmArgs: ["ci", "--install-strategy=shallow", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-fund", "--workspaces=false"] }); execFileSync(runner.command, runner.args, { cwd: directory, stdio: "inherit" }); }'; \
     pnpm ui:build; \
     node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); information.slackRoutingPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-slack-routing.patch")); information.slackRoutingContractVersion = 1; fs.writeFileSync(file, JSON.stringify(information));'; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
-    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
-    node -e 'const fs = require("node:fs"); for (const plugin of fs.readdirSync("/tmp/release-extensions")) { const source = "/tmp/release-extensions/" + plugin + "/node_modules"; if (fs.existsSync(source)) fs.cpSync(source, "dist/extensions/" + plugin + "/node_modules", { recursive: true, verbatimSymlinks: true }); }'; \
-    cp -a /tmp/slack-production-dependencies/node_modules dist/extensions/slack/node_modules; \
-    cp /tmp/slack-production-dependencies/package-lock.json dist/extensions/slack/package-lock.json; \
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
+
+# Install production dependencies from the patched source lockfile, including
+# its security fixes; the released image's node_modules belong to the old lock.
+FROM openclaw-build AS openclaw-production
+RUN set -eu; \
+    rm -rf node_modules ui/node_modules; \
+    find packages extensions -name node_modules -prune -exec rm -rf {} +; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack", "acpx"])].join(" "))')"; \
+    set -- --filter . --filter ./ui --filter './packages/*'; \
+    for plugin in $selected_plugins; do set -- "$@" --filter "./extensions/$plugin"; done; \
+    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile --prod "$@" \
+      --config.supportedArchitectures.os=linux \
+      --config.supportedArchitectures.cpu="$(node -p 'process.arch')" \
+      --config.supportedArchitectures.libc=glibc; \
+    node scripts/docker/verify-fs-safe-native.mjs --package-root /app --mode require; \
+    OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
+    for plugin in slack acpx; do \
+      rm -rf "dist/extensions/$plugin/node_modules"; \
+      cp -a "/tmp/$plugin-production-dependencies/node_modules" "dist/extensions/$plugin/node_modules"; \
+      cp "/tmp/$plugin-production-dependencies/package-lock.json" "dist/extensions/$plugin/package-lock.json"; \
+    done; \
+    mkdir /tmp/runtime-extension-sources; \
+    for plugin in $selected_plugins; do cp -a "extensions/$plugin" /tmp/runtime-extension-sources/; done; \
+    rm -rf node_modules/openclaw node_modules/.bin/openclaw; \
     node -e 'process.stdout.write(JSON.stringify(require("node:fs").readdirSync("dist", { recursive: true }).toSorted()))' > /tmp/openclaw-build-files.json
 
 # Extend the release with regenerated runtime bundles from the reviewed patch.
@@ -60,13 +81,17 @@ FROM openclaw-release
 COPY --from=runtime-node /usr/local/bin/node /usr/local/bin/node
 
 # Replace generated artifacts instead of overlaying obsolete release bundles.
-RUN rm -rf /app/dist
+RUN rm -rf /app/dist /app/node_modules /app/packages /app/extensions
 
 # All runtime bundles and plugin assets come from the same patched source build.
 # The Control UI is rebuilt against the same runtime identity; production native
-# dependencies stay pinned above.
-COPY --from=openclaw-build --chown=node:node /app/dist/ /app/dist/
-COPY --from=openclaw-build --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
+# dependencies are installed from the same patched source lockfile.
+COPY --from=openclaw-production --chown=node:node /app/dist/ /app/dist/
+COPY --from=openclaw-production --chown=node:node /app/node_modules/ /app/node_modules/
+COPY --from=openclaw-production --chown=node:node /app/packages/ /app/packages/
+COPY --from=openclaw-production --chown=node:node /tmp/runtime-extension-sources/ /app/extensions/
+COPY --from=openclaw-production --chown=node:node /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/
+COPY --from=openclaw-production --chown=node:node /tmp/openclaw-build-files.json /app/openclaw-build-files.json
 COPY --from=openclaw-build --chown=node:node /app/docker-entrypoint.mjs /app/docker-entrypoint.mjs
 COPY --from=openclaw-build --chmod=0644 /tmp/openclaw-slack-routing.patch /etc/openclaw-slack-routing.patch
 COPY scripts/check-slack-routing.ts /usr/local/lib/openclaw-railway/check-slack-routing.ts

@@ -59,3 +59,29 @@ run_image_admission_checks() {
       if (!identity || identity !== runtime.buildId) throw new Error("Control UI build identity differs from runtime");
     '"'"''
 }
+
+install_image_worker_probe() {
+  : "${gateway:?}"
+  # Exercise asynchronous acquisition in the packaged Gateway on its existing
+  # restart. The CLI registration probe uses the synchronous loader.
+  docker exec "$gateway" as-node node -e '
+    const fs = require("node:fs");
+    const root = "/data/image-worker-probe";
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(root + "/package.json", JSON.stringify({ name: "image-worker-probe", version: "1.0.0", type: "module", openclaw: { extensions: ["./index.mjs"] } }));
+    fs.writeFileSync(root + "/openclaw.plugin.json", JSON.stringify({ id: "image-worker-probe", configSchema: { type: "object", additionalProperties: false, properties: {} } }));
+    fs.writeFileSync(root + "/index.mjs", `import { writeFileSync } from "node:fs"; export default { id: "image-worker-probe", register(api) { writeFileSync("/data/.openclaw/image-worker-registration.json", JSON.stringify({ pluginId: api.id, source: import.meta.url })); } };`);
+  '
+  gateway_cli plugins install /data/image-worker-probe --link --force >/dev/null
+}
+
+check_image_worker_probe() {
+  : "${gateway:?}"
+  check "the packaged Gateway executes an external plugin captured by its preparation worker" \
+    'docker exec "$gateway" as-node node -e '"'"'
+      const { pluginId, source } = require("/data/.openclaw/image-worker-registration.json");
+      const assert = require("node:assert/strict");
+      assert.equal(pluginId, "image-worker-probe");
+      assert.match(source, /^file:\/\/\/tmp\/.*\/plugin-preparation-[^/]+\//);
+    '"'"''
+}

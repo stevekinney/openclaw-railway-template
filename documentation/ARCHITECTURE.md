@@ -32,7 +32,7 @@ way in is Tailscale Serve, which OpenClaw configures and owns.
 
 ## The OpenClaw service
 
-The image extends the pinned OpenClaw release with the reviewed capture and activation patch, Tailscale's two binaries, and the tools skills need. Runtime bundles are rebuilt from the pinned upstream source; production dependencies and plugin selection come from the release image:
+The image extends the pinned OpenClaw release with the reviewed capture and activation patch, Tailscale's two binaries, and the tools skills need. Runtime bundles are rebuilt from the pinned upstream source. The release supplies the baseline plugin selection. The build adds Slack and ACPX and installs all production dependencies from the patched source lockfile. Their image-owned paths follow host upgrades. The build checks both plugins through the real loader before accepting the image:
 
 - `scripts/entrypoint.sh` (mostly comments and error messages) runs as root,
   validates the environment, prepares the volume, writes
