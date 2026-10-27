@@ -114,6 +114,38 @@ export function verifyCompositionLock(
   assert.deepStrictEqual(composedRoot.devDependencies ?? {}, originalDevelopment, "Composition changed development dependencies");
 }
 
+async function composeSourceLockfile(root: string): Promise<void> {
+  const requireSource = createRequire(join(root, "package.json"));
+  const { parse, stringify } = requireSource("yaml") as { parse(source: string): unknown; stringify(value: unknown): string };
+  const { pnpmLockfileDocuments } = await import(pathToFileURL(join(root, "scripts/lib/pnpm-lockfile-documents.mjs")).href);
+  const { preparePackageBundledPlugins } = await import(pathToFileURL(join(root, "scripts/lib/package-bundled-plugins.mts")).href);
+  const lockPath = join(root, "pnpm-lock.yaml");
+  const readLock = () => {
+    const documents = pnpmLockfileDocuments(readFileSync(lockPath, "utf8"));
+    return { environment: documents.environment, application: parse(documents.dependencies) };
+  };
+  const writeLock = (lock: { environment: string | null; application: unknown }) => {
+    const environment = lock.environment === null ? "" : `---\n${lock.environment}\n---\n`;
+    writeFileSync(lockPath, environment + stringify(lock.application));
+  };
+  const plugins = [...BUNDLED_PLUGIN_IDS];
+  const beforeLock = readLock();
+  const composedLock = structuredClone(beforeLock);
+  const cleanup = await preparePackageBundledPlugins(root, plugins, (error: Error) => {
+    throw error;
+  });
+  try {
+    const manifest = readObject(join(root, "package.json"));
+    composeLockfileRootImporter(composedLock.application, manifest, plugins);
+    verifyCompositionLock(beforeLock, composedLock, manifest);
+    writeLock(composedLock);
+    verifyCompositionLock(beforeLock, readLock(), manifest);
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
 function readObject(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   assert(value && typeof value === "object" && !Array.isArray(value), `Expected object: ${path}`);
@@ -292,9 +324,10 @@ export function verifyRuntimeRegistration(root: string): void {
 
 if (import.meta.main) {
   const [mode, root, input] = process.argv.slice(2);
-  const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, or dependencies ROOT";
+  const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, dependencies ROOT, or compose-lockfile ROOT";
   assert(root, usage);
   if (mode === "dependencies") verifyInstalledDependencies(root);
+  else if (mode === "compose-lockfile") await composeSourceLockfile(root);
   else if (mode === "identity") {
     assert(input, usage);
     verifySourceIdentity(root, input, process.env.GIT_COMMIT ?? "");
