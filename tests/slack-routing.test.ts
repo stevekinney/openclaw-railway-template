@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
 
 function fixture(run: (root: string, patch: string, release: string) => void): void {
@@ -30,6 +31,27 @@ function fixture(run: (root: string, patch: string, release: string) => void): v
 
 test("accepts a source build matching the pinned release", () => {
   fixture((root, _patch, release) => verifySourceIdentity(root, release, "a".repeat(40)));
+});
+
+test("installs builder dependencies after patching the source and before compiling it", () => {
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  const sourcePatch = dockerfile.indexOf("git apply /tmp/openclaw-plugin-capture.patch");
+  const routingPatch = dockerfile.indexOf("git apply /tmp/openclaw-slack-routing.patch");
+  const install = dockerfile.indexOf("pnpm install --frozen-lockfile");
+  const tests = dockerfile.indexOf("RUN pnpm test");
+  assert(sourcePatch >= 0 && routingPatch >= 0 && install >= 0 && tests >= 0);
+  assert(install > sourcePatch && install > routingPatch, "The builder must install the patched lockfile.");
+  assert(install < tests, "The source tests and compiler must use the patched dependencies.");
+});
+
+test("checks the builder's resolved Zod before a runtime build exists", () => {
+  fixture((root) => {
+    const script = fileURLToPath(new URL("../scripts/check-slack-routing.ts", import.meta.url));
+    rmSync(join(root, "dist"), { recursive: true });
+    execFileSync(process.execPath, [script, "dependencies", root], { stdio: "pipe" });
+    writeFileSync(join(root, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "4.6.5" }));
+    assert.throws(() => execFileSync(process.execPath, [script, "dependencies", root], { stdio: "pipe" }), /approved security fix/);
+  });
 });
 
 test("rejects a release upgrade that still builds the previous source", () => {

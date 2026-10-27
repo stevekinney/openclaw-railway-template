@@ -27,6 +27,11 @@ export function verifyRuntimeMetadata(root: string, patch: string): void {
   assert.equal(information.slackRoutingContractVersion, 1, "The image lost its Slack routing contract.");
   assert.equal(information.slackRoutingPatchDigest, createHash("sha256").update(readFileSync(patch)).digest("hex"));
   assert.equal(readObject(join(root, "dist/extensions/acpx/package.json")).version, information.version, "The image must contain its matched ACPX runtime.");
+  verifyInstalledZod(root);
+}
+
+/** Check the resolved dependency before compilation as well as in the final image. */
+export function verifyInstalledZod(root: string): void {
   const zod = createRequire(join(root, "package.json")).resolve("zod/package.json");
   assert.equal(readObject(zod).version, "4.6.6", "The host Zod dependency must include the approved security fix.");
 }
@@ -114,12 +119,17 @@ export function verifyRuntimeRegistration(root: string): void {
 
 if (import.meta.main) {
   const [mode, root, input] = process.argv.slice(2);
-  assert(root && input, "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT");
-  if (mode === "identity") verifySourceIdentity(root, input, process.env.GIT_COMMIT ?? "");
-  else {
+  const usage = "Usage: node check-slack-routing.ts identity|runtime ROOT INPUT, or dependencies ROOT";
+  assert(root, usage);
+  if (mode === "dependencies") verifyInstalledZod(root);
+  else if (mode === "identity") {
+    assert(input, usage);
+    verifySourceIdentity(root, input, process.env.GIT_COMMIT ?? "");
+  } else {
     assert.equal(mode, "runtime");
+    assert(input, usage);
     verifyRuntimeMetadata(root, input);
     verifyRuntimeRegistration(root);
   }
-  console.log(`Slack routing ${mode} verification passed.`);
+  console.log(`OpenClaw ${mode} verification passed.`);
 }
