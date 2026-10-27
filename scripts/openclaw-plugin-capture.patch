@@ -8390,7 +8390,7 @@ index deb119aa62..811e2f2aec 100644
            readOnly: true,
          });
 diff --git a/src/infra/update-database-backup.test.ts b/src/infra/update-database-backup.test.ts
-index 4eb7b7cf2a..8f450c456c 100644
+index 4eb7b7cf2a..eca2ce768c 100644
 --- a/src/infra/update-database-backup.test.ts
 +++ b/src/infra/update-database-backup.test.ts
 @@ -1,5 +1,5 @@
@@ -8408,19 +8408,68 @@ index 4eb7b7cf2a..8f450c456c 100644
  import * as diskSpace from "./disk-space.js";
  import * as fileDescriptor from "./file-descriptor.js";
  import { openNodeSqliteDatabase } from "./node-sqlite.js";
-@@ -17,11 +16,8 @@ import * as inspection from "./update-candidate-state.inspection.js";
+@@ -17,11 +16,11 @@ import * as inspection from "./update-candidate-state.inspection.js";
  import { discoverUpdateStateSchemaInspectionInProcess } from "./update-candidate-state.js";
  import * as candidateState from "./update-candidate-state.js";
  import * as databaseSizes from "./update-candidate-state.sizes.js";
 -import { resolveUpdateCaptureRoot } from "./update-capture-paths.js";
- import { createUpdateDatabaseBackupInProcess } from "./update-database-backup.js";
+-import { createUpdateDatabaseBackupInProcess } from "./update-database-backup.js";
 -import { retireExpiredStandaloneDoctorCaptures } from "./update-recovery-baseline-capture.js";
++import {
++  createUpdateDatabaseBackup,
++  createUpdateDatabaseBackupInProcess,
++} from "./update-database-backup.js";
  import type { UpdateRecoveryCaptureAcquisition } from "./update-recovery-capture-acquisition.js";
 -import { getUpdateRunAsync } from "./update-run-reader.js";
 
  const dirs = useAutoCleanupTempDirTracker(afterEach);
  afterEach(() => {
-@@ -505,82 +501,6 @@ it("rejects an already-aborted in-process size inventory", async () => {
+@@ -77,6 +76,44 @@ async function fixture(externalAgents = false) {
+   };
+ }
+
++it("keeps worker scratch on the private staging root instead of durable backup output", async () => {
++  const f = await fixture();
++  const cacheRoot = path.join(f.root, "cache");
++  const env = { HOME: f.root, XDG_CACHE_HOME: cacheRoot };
++  const stagingRoots: string[] = [];
++  const backupDirectory = `${f.input.backupRoot}.databases`;
++  await fs.rm(backupDirectory, { recursive: true, force: true });
++  vi.spyOn(inspection, "runUpdateStateInspectionWorker").mockImplementation(async (params) => {
++    stagingRoots.push(params.stagingRoot);
++    const output =
++      params.input.mode === "discover"
++        ? JSON.stringify(f.inspectionPlan)
++        : JSON.stringify({
++            directory: backupDirectory,
++            databases: [],
++            missingPaths: [],
++            sourcePaths: [],
++            sourceGenerations: {},
++            warnings: [],
++          });
++    return {
++      code: 0,
++      signal: null,
++      termination: "exit",
++      outputLimitExceeded: false,
++      stdout: output,
++      stderr: "",
++      inspection: { failure: () => new Error("mock inspection failure") },
++    } as Awaited<ReturnType<typeof inspection.runUpdateStateInspectionWorker>>;
++  });
++
++  await createUpdateDatabaseBackup({ ...f.input, env });
++
++  expect(stagingRoots).toHaveLength(2);
++  expect(stagingRoots.every((root) => root.startsWith(`${cacheRoot}${path.sep}`))).toBe(true);
++  expect(stagingRoots).not.toContain(backupDirectory);
++});
++
+ it.each(["legacy", "current"] as const)(
+   "captures the %s parent's database inventory",
+   async (dialect) => {
+@@ -505,82 +542,6 @@ it("rejects an already-aborted in-process size inventory", async () => {
    ).rejects.toBe(signal.reason);
  });
 
@@ -8504,10 +8553,22 @@ index 4eb7b7cf2a..8f450c456c 100644
    { change: "link", phase: "during" },
    { change: "unlink", phase: "after" },
 diff --git a/src/infra/update-database-backup.ts b/src/infra/update-database-backup.ts
-index 16e3e9bb2d..a70d8764e4 100644
+index 16e3e9bb2d..6b0a8d4dad 100644
 --- a/src/infra/update-database-backup.ts
 +++ b/src/infra/update-database-backup.ts
-@@ -38,7 +38,7 @@ import {
+@@ -21,7 +21,10 @@ import { formatErrorMessageWithCode } from "./errors.js";
+ import { hasNodeErrorCode } from "./path-guards.js";
+ import { isSqliteSnapshotFile } from "./sqlite-file-header.js";
+ import { resolveSqliteDatabaseFilePaths } from "./sqlite-files.js";
+-import { createPrivateSqliteDirectory } from "./sqlite-private-directory.js";
++import {
++  createPrivateSqliteDirectory,
++  resolvePrivateSqliteSnapshotStagingRoot,
++} from "./sqlite-private-directory.js";
+ import { retainSnapshotWork } from "./sqlite-readonly-location-cleanup.js";
+ import { measureUpdateStateFiles } from "./update-candidate-io.js";
+ import { UpdateStateDatabaseOwnerSchema } from "./update-candidate-paths.js";
+@@ -38,7 +41,7 @@ import {
    readUpdateStateDatabaseSizes,
    readUpdateStateDatabaseSizesInProcess,
  } from "./update-candidate-state.sizes.js";
@@ -8516,7 +8577,7 @@ index 16e3e9bb2d..a70d8764e4 100644
  import type { UpdateRecoveryCaptureAcquisition } from "./update-recovery-capture-acquisition.js";
 
  const UpdateDatabaseBackupSchema = z.object({
-@@ -271,9 +271,10 @@ export async function createUpdateDatabaseBackupInProcess(
+@@ -271,9 +274,10 @@ export async function createUpdateDatabaseBackupInProcess(
    const sourceGenerations: UpdateDatabaseBackup["sourceGenerations"] = Object.fromEntries(
      inventory.missing.map((file) => [file, null]),
    );
@@ -8528,6 +8589,34 @@ index 16e3e9bb2d..a70d8764e4 100644
      } catch (error) {
        warnings.push(
          `Database write generation unavailable for ${file}: ${formatErrorMessageWithCode(error)}`,
+@@ -363,14 +367,15 @@ export async function createUpdateDatabaseBackup({
+     const identity = await fs.lstat(directory);
+     try {
+       const sourceEnv = input.env ?? process.env;
+-      const worker = { nodeRunner, timeoutMs, signal, sourceEnv, stagingRoot: directory };
+-      // Each SQLite reader owns its token-protected scratch beneath this private backup directory.
++      const stagingRoot = resolvePrivateSqliteSnapshotStagingRoot(sourceEnv);
++      const worker = { nodeRunner, timeoutMs, signal, sourceEnv, stagingRoot };
++      // Each SQLite reader owns its token-protected scratch beneath the private staging root.
+       const workerInput = {
+         ...input,
+         additionalPaths,
+         additionalFiles,
+         backupRoot,
+-        stagingRoot: directory,
++        stagingRoot,
+       };
+       const shared = path.resolve(input.stateDir, "state", "openclaw.sqlite");
+       const scope = getOpenClawDatabaseMaintenanceScope();
+@@ -382,7 +387,7 @@ export async function createUpdateDatabaseBackup({
+         custody && maintenanceOwnerMayCopySourcesInProcess(scope, shared)
+           ? await discoverUpdateStateSchemaInspectionInProcess({
+               ...workerInput,
+-              stagingRoot: directory,
++              stagingRoot,
+               preserveSourceArtifacts: true,
+             })
+           : parseUpdateStateInspectionWorker(
 diff --git a/src/infra/update-database-generations.test.ts b/src/infra/update-database-generations.test.ts
 index b31ea20a7d..3d316a1a77 100644
 --- a/src/infra/update-database-generations.test.ts
@@ -16139,8 +16228,109 @@ index 0000000000..cb4cd44fe3
 +    loader,
 +  });
 +}
+diff --git a/src/plugins/plugin-instance-module-loader.failed-acquisition.test.ts b/src/plugins/plugin-instance-module-loader.failed-acquisition.test.ts
+index 281ebba578..d614a781d7 100644
+--- a/src/plugins/plugin-instance-module-loader.failed-acquisition.test.ts
++++ b/src/plugins/plugin-instance-module-loader.failed-acquisition.test.ts
+@@ -8,6 +8,96 @@ import { resolveRuntimeWorkerThreadExecArgv } from "../infra/runtime-worker-url.
+
+ const temp = useAutoCleanupTempDirTracker(afterEach);
+
++it("keeps unrelated native imports outside the captured artifact's worker operations", async () => {
++  const directory = temp.make("plugin-native-unrelated-imports-");
++  const root = path.join(directory, "plugin");
++  const host = path.join(directory, "host");
++  const captures = temp.make("plugin-native-unrelated-captures-");
++  fs.mkdirSync(root);
++  fs.mkdirSync(host);
++  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
++  fs.writeFileSync(
++    path.join(root, "index.mjs"),
++    'export const marker = "plugin"; export const read = () => import("./side.mjs"); export const readBlocked = () => import("./blocked.mjs");',
++  );
++  fs.writeFileSync(path.join(root, "side.mjs"), 'export const value = "captured";');
++  fs.writeFileSync(path.join(root, "blocked.mjs"), 'export const value = "blocked";');
++  fs.writeFileSync(path.join(host, "index.mjs"), 'export { value } from "./side.mjs";');
++  fs.writeFileSync(path.join(host, "side.mjs"), 'export const value = "host";');
++  const moduleUrl = (name: string) => new URL(name, import.meta.url).href;
++  const source = `
++    import assert from "node:assert/strict";
++    import fs from "node:fs";
++    import { pathToFileURL } from "node:url";
++    import { parentPort } from "node:worker_threads";
++    import { createPluginCache, withPluginCache } from ${JSON.stringify(moduleUrl("./plugin-cache.ts"))};
++    import { bindPluginInstanceModuleLoader } from ${JSON.stringify(moduleUrl("./plugin-instance-module-loader.ts"))};
++    import { capturePluginGenerationArtifact } from ${JSON.stringify(moduleUrl("./plugin-generation-artifact.ts"))};
++    import { PluginInstance } from ${JSON.stringify(moduleUrl("./plugin-instance.ts"))};
++    import { withPluginSourceCaptureDirectory } from ${JSON.stringify(moduleUrl("./plugin-package-metadata-capture.ts"))};
++    const instance = new PluginInstance("unrelated-imports");
++    const cache = createPluginCache();
++    const rootDir = ${JSON.stringify(root)};
++    const entry = ${JSON.stringify(path.join(root, "index.mjs"))};
++    const host = ${JSON.stringify(host)};
++    const calls = [];
++    let moduleSource = filename => filename;
++    try {
++      await withPluginSourceCaptureDirectory(${JSON.stringify(captures)}, async () => {
++        const artifact = withPluginCache(cache, () => capturePluginGenerationArtifact(
++          rootDir, undefined, run => instance.run(run), filename => moduleSource(filename)));
++        for (const name of ["moduleRoot", "assertModuleAvailable", "prepareModule"]) {
++          const operation = artifact[name];
++          artifact[name] = filename => {
++            calls.push({ name, filename });
++            const value = operation(filename);
++            if (name === "assertModuleAvailable" && filename.endsWith("/blocked.mjs")) {
++              throw new Error("captured input unavailable");
++            }
++            return value;
++          };
++        }
++        withPluginCache(cache, () => bindPluginInstanceModuleLoader({
++          instance, origin: "config", rootDir, source: entry,
++          preparedArtifact: { artifact, attachModuleSource: callback => { moduleSource = callback; } },
++        }));
++        const plugin = instance.loadModule(entry);
++        assert.equal(plugin.marker, "plugin");
++        calls.length = 0;
++        assert.equal((await import(pathToFileURL(${JSON.stringify(path.join(host, "index.mjs"))}).href)).value, "host");
++        assert.deepEqual(calls.filter(call => call.filename.startsWith(host + "/")), []);
++        const sibling = artifact.boundaryRoot + "-neighbor";
++        fs.mkdirSync(sibling);
++        fs.writeFileSync(sibling + "/index.mjs", 'export const value = "neighbor";');
++        calls.length = 0;
++        assert.equal((await import(pathToFileURL(sibling + "/index.mjs").href)).value, "neighbor");
++        assert.deepEqual(calls.filter(call => call.filename.startsWith(sibling + "/")), []);
++        calls.length = 0;
++        assert.equal((await plugin.read()).value, "captured");
++        for (const name of ["moduleRoot", "assertModuleAvailable", "prepareModule"]) {
++          assert(calls.some(call => call.name === name && call.filename.startsWith(artifact.boundaryRoot + "/")), name);
++        }
++        await assert.rejects(plugin.readBlocked(), /captured input unavailable/);
++      });
++      parentPort.postMessage("unrelated imports stay outside capture");
++    } finally {
++      await instance.dispose();
++    }
++  `;
++  const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(source)}`), {
++    execArgv: resolveRuntimeWorkerThreadExecArgv(
++      new URL("./plugin-instance-module-loader.ts", import.meta.url),
++    ),
++    workerData: { sourceCaptureDirectory: captures },
++  });
++  try {
++    const [result] = await once(worker, "message");
++    expect(result).toBe("unrelated imports stay outside capture");
++  } finally {
++    await worker.terminate();
++  }
++});
++
+ it("cleans up rejected native ESM acquisitions and failed compiled evaluations", async () => {
+   const root = temp.make("plugin-native-failed-acquisition-");
+   const captures = temp.make("plugin-native-failed-captures-");
 diff --git a/src/plugins/plugin-instance-module-loader.ts b/src/plugins/plugin-instance-module-loader.ts
-index ce4b50dd28..432abef8bb 100644
+index ce4b50dd28..845de7083c 100644
 --- a/src/plugins/plugin-instance-module-loader.ts
 +++ b/src/plugins/plugin-instance-module-loader.ts
 @@ -2,10 +2,8 @@ import fs from "node:fs";
@@ -16154,11 +16344,12 @@ index ce4b50dd28..432abef8bb 100644
  import { createJiti } from "./jiti-factory.js";
  import {
    resolvePluginLoaderTryNative,
-@@ -13,158 +11,34 @@ import {
+@@ -13,158 +11,35 @@ import {
    supportsBunRuntimeOnResolveTargets,
    useNodeModuleHooks,
  } from "./native-module-require.js";
 -import type { PluginModuleLoader } from "./plugin-cache-artifacts.js";
++import { isPathInside as isPathInsideCapture } from "./path-safety.js";
  import { bindPluginCacheRoot, getPluginCache, withPluginCache } from "./plugin-cache.js";
  import {
    capturePluginGenerationArtifact,
@@ -16321,7 +16512,7 @@ index ce4b50dd28..432abef8bb 100644
  /** Runtime and setup share code identity policy while keeping separate instance authority. */
  export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoaderParams): void {
    const cache = getPluginCache();
-@@ -173,29 +47,7 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
+@@ -173,29 +48,7 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
        throw new Error("Source digest validation is not applicable to core-bundled runtime modules");
      }
      // Recaptured bundled code leaves native ESM jobs alive after its inventory retires.
@@ -16352,7 +16543,7 @@ index ce4b50dd28..432abef8bb 100644
      return;
    }
    // Native ESM jobs cannot be unloaded. Keep their capture and compiled helpers
-@@ -208,8 +60,10 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
+@@ -208,8 +61,10 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
    const reusedArtifact = retained?.artifact;
    let artifact: PluginGenerationArtifact;
    try {
@@ -16363,6 +16554,52 @@ index ce4b50dd28..432abef8bb 100644
        capturePluginGenerationArtifact(
          params.rootDir,
          params.standalone ? params.source : undefined,
+@@ -399,7 +254,10 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
+         ? sourceForOutput(fileURLToPath(parent))
+         : undefined;
+       const parentSource = parentEntry?.source;
+-      const parentRoot = parentSource && artifact.moduleRoot(parentSource);
++      const parentRoot =
++        parentSource && isPathInsideCapture(artifact.boundaryRoot, parentSource)
++          ? artifact.moduleRoot(parentSource)
++          : undefined;
+       const resolverSource =
+         parentEntry?.generated && parentSource && artifact.sourceForCaptured(parentSource);
+       // Generated helpers forward Jiti-only resolver options through this instance's owner.
+@@ -591,18 +449,21 @@ export function bindPluginInstanceModuleLoader(params: PluginInstanceModuleLoade
+         ) {
+           resolved = { ...resolved, importAttributes: { ...attributes, type: "json" } };
+         }
+-        artifact.assertModuleAvailable(filename);
+-        const additions = artifact.prepareModule(filename);
+-        includeSources(additions);
+-        if (
+-          (isPluginSourceModulePath(filename) || filename.endsWith(".jsx")) &&
+-          artifact.moduleRoot(filename)
+-        ) {
+-          const url = new URL(resolved.url);
+-          url.pathname = pathToFileURL(
+-            prepareSource(filename, sourceMode, resolved.format),
+-          ).pathname;
+-          return { ...resolved, url: url.href };
++        // Captured-package lookup already refuses outside paths; keep unrelated host imports local.
++        if (isPathInsideCapture(artifact.boundaryRoot, filename)) {
++          artifact.assertModuleAvailable(filename);
++          const additions = artifact.prepareModule(filename);
++          includeSources(additions);
++          if (
++            (isPluginSourceModulePath(filename) || filename.endsWith(".jsx")) &&
++            artifact.moduleRoot(filename)
++          ) {
++            const url = new URL(resolved.url);
++            url.pathname = pathToFileURL(
++              prepareSource(filename, sourceMode, resolved.format),
++            ).pathname;
++            return { ...resolved, url: url.href };
++          }
+         }
+       }
+       return resolved;
 diff --git a/src/plugins/plugin-module-loader-recovery.ts b/src/plugins/plugin-module-loader-recovery.ts
 index 6a20805342..74b8318eef 100644
 --- a/src/plugins/plugin-module-loader-recovery.ts
