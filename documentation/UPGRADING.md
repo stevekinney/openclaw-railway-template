@@ -43,7 +43,17 @@ When upgrading OpenClaw, update the release image, source commit/archive checksu
 
 The image also builds [ACPX](https://docs.openclaw.ai/plugins/reference/acpx) from the pinned host source. Its production dependencies come from the same source lockfile, with the generated npm lockfile retained beside the plugin. The build replaces the dependency directory completely and verifies ACPX registration, source path, and version through the real host with network access blocked. Missing or mismatched ACPX bundles reject the image. The builder and final runtime both verify their resolved Zod, Undici, and Express body-parser versions. Both companion dependency installs must also pass `npm audit`; warnings cannot silently pass the image build.
 
-For a volume with an older separately installed ACPX package, select the image-owned copy once with `openclaw plugins install acpx --no-enable`. This preserves existing enablement while the supported installer replaces the installation record and package. Preserve ACPX configuration and session state; do not delete its state directory. Read back `openclaw plugins info acpx --json`: the source and installation path must resolve under `/app/dist/extensions/acpx`, and its version must match the host. That stable path follows later image upgrades instead of leaving an older archive on the volume in charge.
+For a volume with an older separately installed ACPX package, select the image-owned copy once with `openclaw plugins install acpx --no-enable`. This preserves existing enablement while the supported installer replaces the installation record and package. Preserve ACPX configuration and session state; do not delete its state directory. Read back `openclaw plugins info acpx --runtime --json`: the source and installation path must resolve under `/app/dist/extensions/acpx`, and its version must match the host. That stable path follows later image upgrades instead of leaving an older archive on the volume in charge.
+
+When the retained package is slowing Doctor itself, select the bundled copy before Doctor starts. For that first deployment, set Railway's custom start command to the complete command below. Railway replaces the image entrypoint when a custom start command is set, so the privilege drop and `tini` must remain in the command.
+
+```sh
+openclaw-railway-entrypoint tini -s -- node /app/docker-entrypoint.mjs node /app/openclaw.mjs --select-bundled-plugin acpx gateway --bind loopback --tailscale serve --auth token
+```
+
+The activation adapter validates the bundle's image path, manifest identity, and matching host version before starting the supported installer with `--no-enable`. Selection then runs full Doctor and records activation only after success. Failed or interrupted installation prevents Doctor, Gateway, and receipt publication. Clear the custom start command after verifying readiness and the bundled installation path; leaving explicit selection enabled forces another full activation on every boot. Routine boots then use the matching image receipt and Gateway admission.
+
+Both direct npm commands and OpenClaw-managed installs keep disposable download caches in `/tmp/npm`; the installer derives this path from `XDG_CACHE_HOME=/tmp` unless an operation supplies its own cache directory. Recovery captures, published native artifacts, and plugin state remain on `/data`.
 
 ## Review the release
 

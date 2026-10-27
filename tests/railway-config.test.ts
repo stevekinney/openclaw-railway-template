@@ -73,6 +73,13 @@ test("disposable SQLite inspection snapshots use container storage", () => {
   assert.equal(findService("openclaw").variables?.XDG_CACHE_HOME?.value, "/tmp");
 });
 
+test("npm download caches use container storage in both deployment definitions", async () => {
+  assert.equal(findService("openclaw").variables?.NPM_CONFIG_CACHE?.value, "/tmp/npm");
+  const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+  const environmentInstructions = dockerfile.replace(/\\\r?\n/g, " ").split("\n").filter((line) => line.startsWith("ENV ")).join("\n");
+  assert.match(environmentInstructions, /(?:^|\s)NPM_CONFIG_CACHE=\/tmp\/npm(?:\s|$)/);
+});
+
 test("the baseline explicitly allows heartbeat DMs without selecting a delivery destination", async () => {
   const seed = JSON.parse(await readFile(new URL("../config/openclaw.seed.json", import.meta.url), "utf8"));
   assert.equal(seed.agents?.defaults?.heartbeat?.directPolicy, "allow");

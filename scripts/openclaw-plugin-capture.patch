@@ -1,18 +1,150 @@
 diff --git a/docker-entrypoint.mjs b/docker-entrypoint.mjs
-index 3abe74e9f8..5ee951180f 100644
+index 3abe74e9f8..518346f798 100644
 --- a/docker-entrypoint.mjs
 +++ b/docker-entrypoint.mjs
-@@ -1,5 +1,6 @@
+@@ -1,10 +1,14 @@
  // Image activation owns unattended retained-volume repair; ordinary CLI startup only admits state.
  import { spawn } from "node:child_process";
 +import { createHash, randomUUID } from "node:crypto";
  import fs from "node:fs";
  import os from "node:os";
  import path from "node:path";
-@@ -69,6 +70,128 @@ function gatewayInvocation(program) {
-   return options && !options.commandOptions.includes("--reset") ? options : undefined;
- }
+ import { fileURLToPath } from "node:url";
+-import { getCommandOptionsWithRootOptions } from "./cli-root-options.mjs";
++import {
++  consumeRootCommandOptionToken,
++  getCommandOptionsWithRootOptions,
++} from "./cli-root-options.mjs";
+ import {
+   GATEWAY_RUN_BOOLEAN_FLAGS,
+   GATEWAY_RUN_VALUE_FLAGS,
+@@ -13,6 +17,50 @@ import {
 
+ const root = path.dirname(fileURLToPath(import.meta.url));
+ const command = process.argv.slice(2);
++const bundledPluginIdPattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u;
++
++function selectedBundledPluginIds(argv) {
++  const selectors = [];
++  const cleaned = [argv[0]];
++  let gatewaySeen = false;
++  for (let index = 1; index < argv.length; index += 1) {
++    const argument = argv[index];
++    const rootTokens = consumeRootCommandOptionToken(argv, index);
++    if (rootTokens) {
++      cleaned.push(...argv.slice(index, index + rootTokens));
++      index += rootTokens - 1;
++      continue;
++    }
++    if (argument === "--") {
++      cleaned.push(...argv.slice(index));
++      break;
++    }
++    if (gatewaySeen && GATEWAY_RUN_VALUE_FLAGS.has(argument)) {
++      cleaned.push(argument, ...argv.slice(index + 1, index + 2));
++      index += 1;
++      continue;
++    }
++    if (argument === "gateway") {
++      gatewaySeen = true;
++    }
++    if (argument === "--select-bundled-plugin") {
++      if (gatewaySeen || index + 1 >= argv.length) {
++        throw new Error("--select-bundled-plugin must precede the foreground Gateway command");
++      }
++      const id = argv[++index];
++      if (!bundledPluginIdPattern.test(id)) {
++        throw new Error(`Invalid bundled plugin selector: ${id}`);
++      }
++      if (selectors.includes(id)) {
++        throw new Error(`Duplicate bundled plugin selector: ${id}`);
++      }
++      selectors.push(id);
++      continue;
++    }
++    cleaned.push(argument);
++  }
++  return { cleaned, selectors };
++}
+
+ function executable(name) {
+   const candidates = name.includes(path.sep)
+@@ -35,11 +83,12 @@ function gatewayInvocation(program) {
+   if (!command.length) {
+     throw new Error("Docker entrypoint requires a command");
+   }
++  const selection = selectedBundledPluginIds(command);
+   let argv;
+   if (program === fs.realpathSync(process.execPath) && command[1]) {
+     let entry;
+     try {
+-      entry = fs.realpathSync(command[1]);
++      entry = fs.realpathSync(selection.cleaned[1]);
+     } catch {
+       return undefined;
+     }
+@@ -50,9 +99,9 @@ function gatewayInvocation(program) {
+     ) {
+       return undefined;
+     }
+-    argv = [process.execPath, entry, ...command.slice(2)];
++    argv = [process.execPath, entry, ...selection.cleaned.slice(2)];
+   } else if (program === path.join(root, "openclaw.mjs")) {
+-    argv = [process.execPath, program, ...command.slice(1)];
++    argv = [process.execPath, program, ...selection.cleaned.slice(1)];
+   } else {
+     return undefined;
+   }
+@@ -66,7 +115,171 @@ function gatewayInvocation(program) {
+     mode: "command-path",
+   });
+   // Reset owns deletion before initialization; do not migrate state it will discard.
+-  return options && !options.commandOptions.includes("--reset") ? options : undefined;
++  return options && !options.commandOptions.includes("--reset")
++    ? { ...options, command: selection.cleaned, selectedPlugins: selection.selectors }
++    : undefined;
++}
++
++function validateSelectedBundles(ids) {
++  if (!ids.length) {
++    return;
++  }
++  const bundledRoot = path.join(root, "dist", "extensions");
++  const bundledRootReal = fs.realpathSync(bundledRoot);
++  if (
++    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR &&
++    fs.realpathSync(process.env.OPENCLAW_BUNDLED_PLUGINS_DIR) !== bundledRootReal
++  ) {
++    throw new Error("Bundled plugin selection requires the image extensions root");
++  }
++  const hostVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
++  for (const id of ids) {
++    const directory = path.join(bundledRootReal, id);
++    const realDirectory = fs.realpathSync(directory);
++    const relative = path.relative(bundledRootReal, realDirectory);
++    if (
++      !relative ||
++      relative === ".." ||
++      relative.startsWith(`..${path.sep}`) ||
++      path.isAbsolute(relative)
++    ) {
++      throw new Error(`Bundled plugin escapes the extensions root: ${id}`);
++    }
++    const packageJson = JSON.parse(
++      fs.readFileSync(path.join(realDirectory, "package.json"), "utf8"),
++    );
++    const manifest = JSON.parse(
++      fs.readFileSync(path.join(realDirectory, "openclaw.plugin.json"), "utf8"),
++    );
++    if (manifest.id !== id) {
++      throw new Error(`Bundled plugin manifest id mismatch: ${id}`);
++    }
++    if (packageJson.version !== hostVersion) {
++      throw new Error(`Bundled plugin version mismatch: ${id}`);
++    }
++  }
++}
++
 +function imageActivation(invocation) {
 +  const receipt = process.env.OPENCLAW_DOCKER_ACTIVATION_RECEIPT;
 +  if (!receipt) {
@@ -133,46 +265,100 @@ index 3abe74e9f8..5ee951180f 100644
 +  } finally {
 +    fs.rmSync(temporary, { force: true });
 +  }
-+}
-+
+ }
+
  try {
-   const program = command[0] && executable(command[0]);
-   if (!program) {
-@@ -76,9 +199,9 @@ try {
+@@ -75,45 +288,83 @@ try {
+     console.error("OpenClaw container activation command was not found");
      process.exit(127);
    }
++  const selection = selectedBundledPluginIds(command);
    const invocation = gatewayInvocation(program);
--  if (invocation) {
++  if (selection.selectors.length && !invocation) {
++    throw new Error("--select-bundled-plugin requires a foreground Gateway command");
++  }
+   if (invocation) {
++    validateSelectedBundles(invocation.selectedPlugins);
++  }
 +  const activation = invocation && imageActivation(invocation);
-+  if (invocation && !activationCompleted(activation)) {
++  if (invocation && (invocation.selectedPlugins.length || !activationCompleted(activation))) {
      let interrupted;
 -    let child;
++    let activeChild;
      for (const signal of ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"]) {
        process.on(signal, () => {
          interrupted ??= signal;
-@@ -86,7 +209,7 @@ try {
-         child?.kill(signal === "SIGHUP" || signal === "SIGQUIT" ? "SIGTERM" : signal);
+         // Doctor's maintenance barriers own INT/TERM; HUP/QUIT must use that drain too.
+-        child?.kill(signal === "SIGHUP" || signal === "SIGQUIT" ? "SIGTERM" : signal);
++        activeChild?.kill(signal === "SIGHUP" || signal === "SIGQUIT" ? "SIGTERM" : signal);
        });
      }
 -    child = spawn(
-+    const child = spawn(
-       process.execPath,
-       [
-         path.join(root, "openclaw.mjs"),
-@@ -101,16 +224,20 @@ try {
-     child.on("error", (error) => {
-       failure = error;
-     });
+-      process.execPath,
+-      [
+-        path.join(root, "openclaw.mjs"),
++    const runChild = (args) =>
++      new Promise((resolve, reject) => {
++        if (interrupted) {
++          resolve({ code: null, signal: interrupted });
++          return;
++        }
++        let failure;
++        activeChild = spawn(process.execPath, [path.join(root, "openclaw.mjs"), ...args], {
++          stdio: "inherit",
++          env: process.env,
++        });
++        activeChild.once("error", (error) => {
++          failure = error;
++        });
++        activeChild.once("close", (code, signal) => {
++          activeChild = undefined;
++          if (failure) {
++            reject(failure instanceof Error ? failure : new Error(String(failure)));
++          } else {
++            resolve({ code, signal });
++          }
++        });
++      });
++    for (const pluginId of invocation.selectedPlugins) {
++      const outcome = await runChild([
+         ...invocation.rootOptions,
+-        "doctor",
+-        "--fix",
+-        "--non-interactive",
+-      ],
+-      { stdio: "inherit", env: process.env },
+-    );
+-    let failure;
+-    child.on("error", (error) => {
+-      failure = error;
+-    });
 -    const outcome = await new Promise((resolve) =>
 -      child.once("close", (code, signal) => resolve({ code, signal })),
 -    );
-+    const outcome = await new Promise((resolve) => {
-+      child.once("close", (code, signal) => resolve({ code, signal }));
-+    });
-     if (failure) {
+-    if (failure) {
 -      throw failure;
-+      throw failure instanceof Error ? failure : new Error(String(failure));
++        "plugins",
++        "install",
++        pluginId,
++        "--no-enable",
++      ]);
++      if (interrupted || outcome.signal || outcome.code !== 0) {
++        process.exit(
++          interrupted
++            ? 128 + os.constants.signals[interrupted]
++            : outcome.signal
++              ? 128 + os.constants.signals[outcome.signal]
++              : (outcome.code ?? 1),
++        );
++      }
      }
++    const outcome = await runChild([
++      ...invocation.rootOptions,
++      "doctor",
++      "--fix",
++      "--non-interactive",
++    ]);
      const signal = interrupted ?? outcome.signal;
      if (signal || outcome.code !== 0) {
        process.exit(signal ? 128 + os.constants.signals[signal] : (outcome.code ?? 1));
@@ -183,7 +369,11 @@ index 3abe74e9f8..5ee951180f 100644
 +    console.log("OpenClaw image activation unchanged: continuing to Gateway state admission");
    }
    // Replace the adapter so tini continues to supervise the original command directly.
-   process.execve(program, command, process.env);
+-  process.execve(program, command, process.env);
++  process.execve(program, invocation?.command ?? command, process.env);
+ } catch (error) {
+   console.error(
+     `OpenClaw container activation failed: ${error instanceof Error ? error.message : String(error)}`,
 diff --git a/extensions/a2a/package.json b/extensions/a2a/package.json
 index 948e052092..6c65050c3c 100644
 --- a/extensions/a2a/package.json
@@ -3070,6 +3260,29 @@ index e9250bb88e..7aecb1f0a7 100644
    "mailauth@7.1.0>nodemailer": 10.0.13
    minimatch: 10.2.6
    path-to-regexp: 8.4.2
+diff --git a/src/agents/prepared-model-runtime.copilot.integration.test.ts b/src/agents/prepared-model-runtime.copilot.integration.test.ts
+index 48ee2bf6ed..10c25849da 100644
+--- a/src/agents/prepared-model-runtime.copilot.integration.test.ts
++++ b/src/agents/prepared-model-runtime.copilot.integration.test.ts
+@@ -39,10 +39,14 @@ it("prepares an agent-local Copilot BYOK harness without replacing the active ro
+   });
+   // Reuse Vitest's source graph at the module-loading seam. The real loader
+   // still discovers and validates the entrypoint and owns registration.
+-  const loadModule = vi.fn<pluginModuleRuntime.PluginModuleLoader>((source) => {
+-    expect(source).toBe(entrypoint);
+-    return copilotModule;
+-  });
++  const loadModule = Object.assign(
++    vi.fn((source: string, owner?: Parameters<pluginModuleRuntime.PluginModuleLoader>[1]) => {
++      expect(source).toBe(entrypoint);
++      expect(owner).toBeDefined();
++      return copilotModule;
++    }),
++    { prepare: vi.fn(async () => {}) },
++  );
+   vi.spyOn(pluginModuleRuntime, "createPluginModuleLoader").mockReturnValue(loadModule);
+   const env = {
+     ...process.env,
 diff --git a/src/agents/prepared-model-runtime.inbound-registry.ts b/src/agents/prepared-model-runtime.inbound-registry.ts
 index c0eae3b001..c45afb142f 100644
 --- a/src/agents/prepared-model-runtime.inbound-registry.ts
@@ -6677,6 +6890,99 @@ index c10ac48171..42013e034f 100644
      loadIntent: "startup",
      cfg: params.cfg,
      activationSourceConfig: params.activationSourceConfig,
+diff --git a/src/infra/npm-install-env.test.ts b/src/infra/npm-install-env.test.ts
+index d3381bb44a..a4dd020679 100644
+--- a/src/infra/npm-install-env.test.ts
++++ b/src/infra/npm-install-env.test.ts
+@@ -38,6 +38,64 @@ function createIsolatedNpmConfigEnv(dir: string): NodeJS.ProcessEnv {
+ }
+
+ describe("npm project install env", () => {
++  it.each(["NPM_CONFIG_CACHE", "npm_config_cache", "Npm_Config_Cache"])(
++    "uses the XDG cache directory while resetting ambient %s",
++    async (key) => {
++      await withTempDir("openclaw-npm-cache-", async (directory) => {
++        const cacheRoot = path.join(directory, "temporary-cache");
++        const env = createNpmProjectInstallEnv(
++          {
++            ...createIsolatedNpmConfigEnv(directory),
++            XDG_CACHE_HOME: cacheRoot,
++            [key]: "/ambient-cache",
++          },
++          { npmConfigCwd: directory },
++          FROZEN_NOW,
++        );
++        expect(env.npm_config_cache).toBe(path.join(cacheRoot, "npm"));
++        expect(
++          Object.keys(env).filter((name) => name.toLowerCase() === "npm_config_cache"),
++        ).toEqual(["npm_config_cache"]);
++      });
++    },
++  );
++
++  it("preserves an explicitly owned cache directory instead of the XDG default", async () => {
++    await withTempDir("openclaw-npm-cache-", async (directory) => {
++      const cacheDir = path.join(directory, "operation-cache");
++      const env = createNpmProjectInstallEnv(
++        {
++          ...createIsolatedNpmConfigEnv(directory),
++          XDG_CACHE_HOME: path.join(directory, "temporary-cache"),
++          NPM_CONFIG_CACHE: "/ambient-cache",
++        },
++        { cacheDir, npmConfigCwd: directory },
++        FROZEN_NOW,
++      );
++      expect(env.npm_config_cache).toBe(cacheDir);
++      expect(env.NPM_CONFIG_CACHE).toBeUndefined();
++    });
++  });
++
++  it.each(["", "relative-cache"])(
++    "does not derive a cache from invalid XDG path %j",
++    async (value) => {
++      await withTempDir("openclaw-npm-cache-", async (directory) => {
++        const env = createNpmProjectInstallEnv(
++          {
++            ...createIsolatedNpmConfigEnv(directory),
++            XDG_CACHE_HOME: value,
++            NPM_CONFIG_CACHE: "/ambient-cache",
++          },
++          { npmConfigCwd: directory },
++          FROZEN_NOW,
++        );
++        expect(env.npm_config_cache).toBeUndefined();
++        expect(env.NPM_CONFIG_CACHE).toBeUndefined();
++      });
++    },
++  );
++
+   it.each([
+     ["NPM_CONFIG_FETCH_RETRIES", "0"],
+     ["NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT", "4000"],
+diff --git a/src/infra/npm-install-env.ts b/src/infra/npm-install-env.ts
+index 2d434ae8dd..7b11b89a6b 100644
+--- a/src/infra/npm-install-env.ts
++++ b/src/infra/npm-install-env.ts
+@@ -354,6 +354,10 @@ export function createNpmProjectInstallEnv(
+       nextEnv[key] = fallback;
+     }
+   }
++  const cacheRoot = env.XDG_CACHE_HOME;
++  const cacheDirectory =
++    options.cacheDir ??
++    (cacheRoot && path.isAbsolute(cacheRoot) ? path.join(cacheRoot, "npm") : undefined);
+   const installEnv: NodeJS.ProcessEnv = {
+     ...nextEnv,
+     npm_config_dry_run: "false",
+@@ -361,7 +365,7 @@ export function createNpmProjectInstallEnv(
+     npm_config_location: "project",
+     npm_config_package_lock: "false",
+     npm_config_save: "false",
+-    ...(options.cacheDir ? { npm_config_cache: options.cacheDir } : {}),
++    ...(cacheDirectory ? { npm_config_cache: cacheDirectory } : {}),
+   };
+   applyNpmFreshnessBypassEnv(installEnv, now, options);
+   applyPosixNpmScriptShellEnv(installEnv);
 diff --git a/src/infra/runtime-process-entrypoints.ts b/src/infra/runtime-process-entrypoints.ts
 index 10d9a3086c..cdeb73ca85 100644
 --- a/src/infra/runtime-process-entrypoints.ts
@@ -17587,18 +17893,59 @@ index b3f00ad782..9dc44d2930 100644
          pollIntervalMs: 250,
          sleep: (ms) => sleepWithAbort(ms, admissionSignal),
 diff --git a/test/docker-entrypoint.test.ts b/test/docker-entrypoint.test.ts
-index 8e84f7f0d1..894d3e4b50 100644
+index 8e84f7f0d1..bcf7396ac9 100644
 --- a/test/docker-entrypoint.test.ts
 +++ b/test/docker-entrypoint.test.ts
-@@ -11,6 +11,7 @@ function fixture(command: CommandFixture) {
+@@ -11,12 +11,24 @@ function fixture(command: CommandFixture) {
      fs.copyFileSync(path.resolve(file), path.join(root, file));
    }
    fs.mkdirSync(path.join(root, "dist"));
++  const extensions = path.join(root, "dist", "extensions");
++  fs.mkdirSync(extensions);
++  const bundle = (id: string, version = "2026.10.5") => {
++    const directory = path.join(extensions, id);
++    fs.mkdirSync(directory);
++    fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ version }));
++    fs.writeFileSync(path.join(directory, "openclaw.plugin.json"), JSON.stringify({ id }));
++  };
++  bundle("alpha");
++  bundle("beta");
 +  fs.writeFileSync(path.join(root, "dist/build-info.json"), '{"buildId":"image-one"}');
    const cli = String.raw`#!/usr/bin/env node
  import fs from 'node:fs';
  const args = process.argv.slice(2);
-@@ -58,6 +59,107 @@ if (args.includes('doctor')) {
+ fs.appendFileSync(process.env.RECORD, JSON.stringify({args, pid:process.pid, parentPid:process.ppid})+'\n');
+-if (args.includes('doctor')) {
+-  if (process.env.INTERRUPT_DOCTOR) {
++const interrupt = args.includes('doctor') ? process.env.INTERRUPT_DOCTOR : process.env.INTERRUPT_INSTALL;
++if (args.includes('doctor') || args.includes('install')) {
++  if (interrupt) {
+     for (const signal of ['SIGTERM', 'SIGINT']) {
+       process.on(signal, () => setImmediate(() => {
+         fs.appendFileSync(process.env.RECORD, JSON.stringify({stopped:true, signal})+'\n');
+@@ -24,13 +36,13 @@ if (args.includes('doctor')) {
+       }));
+     }
+     setInterval(() => {}, 1000);
+-    process.kill(process.ppid, process.env.INTERRUPT_DOCTOR);
+-  } else process.exit(Number(process.env.DOCTOR_EXIT || 0));
++    process.kill(process.ppid, interrupt);
++  } else process.exit(Number(args.includes('doctor') ? process.env.DOCTOR_EXIT || 0 : process.env.INSTALL_EXIT || 0));
+ }
+ `;
+   fs.writeFileSync(path.join(root, "openclaw.mjs"), cli, { mode: 0o755 });
+   fs.writeFileSync(path.join(root, "dist/index.js"), cli);
+-  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
++  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module","version":"2026.10.5"}');
+   const record = path.join(root, "calls.jsonl");
+   const runCommand = (argv: string[], env: Record<string, string> = {}) =>
+     command.run(process.execPath, [path.join(root, "docker-entrypoint.mjs"), ...argv], {
+@@ -54,10 +66,285 @@ if (args.includes('doctor')) {
+     runCommand,
+     run: (args: string[], env: Record<string, string> = {}) =>
+       runCommand([process.execPath, ...args], env),
++    bundle,
+   };
  }
 
  describe.skipIf(process.platform === "win32")("Docker image activation", () => {
@@ -17703,9 +18050,190 @@ index 8e84f7f0d1..894d3e4b50 100644
 +    expect(fs.existsSync(receipt)).toBe(false);
 +  });
 +
++  it("installs selected bundled plugins in order before Doctor and strips selectors", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const result = await f.run([
++      "openclaw.mjs",
++      "--select-bundled-plugin",
++      "alpha",
++      "--select-bundled-plugin",
++      "beta",
++      "gateway",
++    ]);
++    expect(result.status, result.stderr).toBe(0);
++    expect(f.read().map((row) => row.args)).toEqual([
++      ["plugins", "install", "alpha", "--no-enable"],
++      ["plugins", "install", "beta", "--no-enable"],
++      ["doctor", "--fix", "--non-interactive"],
++      ["gateway"],
++    ]);
++  });
++
++  it.for(["demo", "gateway"])(
++    "keeps profile %s before selected plugin installation",
++    async (profile, { command }) => {
++      const f = fixture(command);
++      const result = await f.run([
++        "openclaw.mjs",
++        "--profile",
++        profile,
++        "--select-bundled-plugin",
++        "alpha",
++        "gateway",
++      ]);
++      expect(result.status, result.stderr).toBe(0);
++      expect(f.read().map((row) => row.args)).toEqual([
++        ["--profile", profile, "plugins", "install", "alpha", "--no-enable"],
++        ["--profile", profile, "doctor", "--fix", "--non-interactive"],
++        ["--profile", profile, "gateway"],
++      ]);
++    },
++  );
++
++  it("forces selected activation even when the image receipt is already valid", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    expect(
++      (await f.run(["openclaw.mjs", "--select-bundled-plugin", "alpha", "gateway"], environment))
++        .status,
++    ).toBe(0);
++    expect(f.read().map((row) => row.args)).toEqual([
++      ["doctor", "--fix", "--non-interactive"],
++      ["gateway"],
++      ["plugins", "install", "alpha", "--no-enable"],
++      ["doctor", "--fix", "--non-interactive"],
++      ["gateway"],
++    ]);
++  });
++
++  it.for([
++    [
++      "duplicate",
++      ["--select-bundled-plugin", "alpha", "--select-bundled-plugin", "alpha", "gateway"],
++    ],
++    ["unsafe", ["--select-bundled-plugin", "../alpha", "gateway"]],
++    ["non-Gateway", ["--select-bundled-plugin", "alpha", "doctor"]],
++    ["missing", ["--select-bundled-plugin", "missing", "gateway"]],
++    ["missing value", ["--select-bundled-plugin"]],
++    ["late selector", ["gateway", "--select-bundled-plugin", "alpha"]],
++  ] satisfies Array<[string, string[]]>)(
++    "rejects %s bundled plugin selection before spawning children",
++    async ([, args], { command }) => {
++      const f = fixture(command);
++      const result = await f.run(["openclaw.mjs", ...args]);
++      expect(result.status).toBe(1);
++      expect(fs.existsSync(path.join(f.root, "calls.jsonl"))).toBe(false);
++    },
++  );
++
++  it("prevalidates every selected bundle before starting any install", async ({ command }) => {
++    const f = fixture(command);
++    f.bundle("broken", "2026.10.4");
++    const result = await f.run([
++      "openclaw.mjs",
++      "--select-bundled-plugin",
++      "alpha",
++      "--select-bundled-plugin",
++      "broken",
++      "gateway",
++    ]);
++    expect(result.status).toBe(1);
++    expect(fs.existsSync(path.join(f.root, "calls.jsonl"))).toBe(false);
++  });
++
++  it("does not start Doctor after a selected plugin install fails", async ({ command }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    const environment = { OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt };
++    expect((await f.run(["openclaw.mjs", "gateway"], environment)).status).toBe(0);
++    const before = fs.readFileSync(receipt, "utf8");
++    const result = await f.run(["openclaw.mjs", "--select-bundled-plugin", "alpha", "gateway"], {
++      ...environment,
++      INSTALL_EXIT: "78",
++    });
++    expect(result.status).toBe(78);
++    expect(fs.readFileSync(receipt, "utf8")).toBe(before);
++    expect(
++      f
++        .read()
++        .slice(2)
++        .map((row) => row.args),
++    ).toEqual([["plugins", "install", "alpha", "--no-enable"]]);
++  });
++
++  it.for(["manifest", "symlink", "root override"])(
++    "rejects a %s bundle mismatch without installation",
++    async (kind, { command }) => {
++      const f = fixture(command);
++      const environment: Record<string, string> = {};
++      const bundle = path.join(f.root, "dist/extensions/alpha");
++      if (kind === "manifest") {
++        fs.writeFileSync(path.join(bundle, "openclaw.plugin.json"), '{"id":"other"}');
++      }
++      if (kind === "symlink") {
++        fs.renameSync(bundle, path.join(f.root, "outside-alpha"));
++        fs.symlinkSync(path.join(f.root, "outside-alpha"), bundle);
++      }
++      if (kind === "root override") {
++        environment.OPENCLAW_BUNDLED_PLUGINS_DIR = f.root;
++      }
++      const result = await f.run(
++        ["openclaw.mjs", "--select-bundled-plugin", "alpha", "gateway"],
++        environment,
++      );
++      expect(result.status).toBe(1);
++      expect(fs.existsSync(path.join(f.root, "calls.jsonl"))).toBe(false);
++    },
++  );
++
++  it("drains an interrupted install without later installation, Doctor, or a receipt", async ({
++    command,
++  }) => {
++    const f = fixture(command);
++    const receipt = path.join(f.root, "activation.json");
++    const result = await f.run(
++      [
++        "openclaw.mjs",
++        "--select-bundled-plugin",
++        "alpha",
++        "--select-bundled-plugin",
++        "beta",
++        "gateway",
++      ],
++      {
++        OPENCLAW_DOCKER_ACTIVATION_RECEIPT: receipt,
++        INTERRUPT_INSTALL: "SIGTERM",
++      },
++    );
++    expect(result.status).toBe(143);
++    expect(f.read()).toEqual([
++      {
++        args: ["plugins", "install", "alpha", "--no-enable"],
++        pid: expect.any(Number),
++        parentPid: expect.any(Number),
++      },
++      { stopped: true, signal: "SIGTERM" },
++    ]);
++    expect(fs.existsSync(receipt)).toBe(false);
++  });
++
    it.for([
      { args: ["openclaw.mjs", "gateway"], rootOptions: [] },
      { args: ["openclaw", "gateway"], rootOptions: [], installed: true },
+@@ -70,6 +357,7 @@ describe.skipIf(process.platform === "win32")("Docker image activation", () => {
+     { args: ["openclaw.mjs", "--dev", "gateway"], rootOptions: ["--dev"] },
+     { args: ["openclaw.mjs", "gateway", "--dev"], rootOptions: [] },
+     { args: ["openclaw.mjs", "gateway", "--token", "--reset"], rootOptions: [] },
++    { args: ["openclaw.mjs", "gateway", "--token", "--select-bundled-plugin"], rootOptions: [] },
+   ])(
+     "settles Doctor then execs the original command: $args",
+     async ({ args, rootOptions, installed }, { command }) => {
 diff --git a/ui/package.json b/ui/package.json
 index 25a98d9a07..d84b8676d8 100644
 --- a/ui/package.json

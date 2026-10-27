@@ -63,6 +63,7 @@ export default defineRailway(() => {
       // Doctor's disposable SQLite read snapshots belong on fast container
       // storage; HOME is on the slower persistent volume for credentials.
       XDG_CACHE_HOME: "/tmp",
+      NPM_CONFIG_CACHE: "/tmp/npm",
       // The marketplace template uses this supported variable because its
       // editor exposes the health path without a timeout field.
       RAILWAY_HEALTHCHECK_TIMEOUT_SEC: "600",
