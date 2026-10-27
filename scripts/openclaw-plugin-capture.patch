@@ -3740,6 +3740,21 @@ diff --git a/scripts/lib/bundled-plugin-dependency-links.mjs b/scripts/lib/bundl
 index d55d94ed39..3ca0219034 100644
 --- a/scripts/lib/bundled-plugin-dependency-links.mjs
 +++ b/scripts/lib/bundled-plugin-dependency-links.mjs
+@@ -15,6 +15,6 @@ export function linkSourcePluginDependencies(pluginDir, distNodeModules) {
+   }
+   const packages = fs.readdirSync(sourceModules).flatMap((name) => {
+-    if (name.startsWith(".") && name !== ".bin") {
++    if (name.startsWith(".")) {
+       return [];
+     }
+     return name.startsWith("@")
+@@ -20,5 +20,5 @@ export function linkSourcePluginDependencies(pluginDir, distNodeModules) {
+   });
+   // An outer node_modules junction misresolves pnpm's relative links on Windows.
+   // Link canonical package roots individually; keep scopes real and payloads source-owned.
+-  // Preserve .bin for managed launchers that resolve the plugin's private CLI shim.
++  // Keep .bin in the plugin-local tree; it is not a shared package to link.
+   for (const name of packages) {
 @@ -26,6 +26,12 @@ export function linkSourcePluginDependencies(pluginDir, distNodeModules) {
      const target = path.join(distNodeModules, name);
      fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -18607,7 +18622,7 @@ index 006734902a..7c9307970c 100644
  import {
    parseDockerPluginKeepList,
    pruneDockerPluginDist,
-@@ -50,6 +51,42 @@ afterEach(() => {
+@@ -50,6 +51,51 @@ afterEach(() => {
    cleanupTempDirs(tempDirs);
  });
 
@@ -18637,10 +18652,19 @@ index 006734902a..7c9307970c 100644
 +    writeNodePackage(root, "shared-client", { version: "1.0.0" }, first);
 +    writeNodePackage(root, "shared-client", { version: "2.0.0" }, second);
 +    const sharedModules = path.join(root, "dist", "node_modules");
++    fs.mkdirSync(path.join(sharedModules, ".bin"), { recursive: true });
++    fs.writeFileSync(path.join(sharedModules, ".bin", "gateway"), "root bin");
++    for (const plugin of [first, second]) {
++      const privateBin = path.join(plugin, "node_modules", ".bin");
++      fs.mkdirSync(privateBin, { recursive: true });
++      fs.writeFileSync(path.join(privateBin, "private-cli"), "plugin bin");
++    }
 +    linkSourcePluginDependencies(first, sharedModules);
 +    expect(() => linkSourcePluginDependencies(second, sharedModules)).toThrow(
 +      /Conflicting bundled dependency shared-client:/,
 +    );
++    expect(fs.readFileSync(path.join(sharedModules, ".bin", "gateway"), "utf8")).toBe("root bin");
++    expect(fs.existsSync(path.join(first, "node_modules", ".bin", "private-cli"))).toBe(true);
 +    expect(fs.realpathSync(path.join(sharedModules, "shared-client"))).toBe(
 +      fs.realpathSync(path.join(first, "node_modules/shared-client")),
 +    );
