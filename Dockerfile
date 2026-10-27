@@ -12,7 +12,7 @@ FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b
 # Rebuild the pinned release with the reviewed cold-capture engine fix. Keep the
 # patch tied to this source revision; an upstream upgrade must revalidate it.
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS bun
-FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS openclaw-build
+FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS openclaw-source
 WORKDIR /app
 ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
     OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
@@ -35,11 +35,13 @@ RUN git apply --check /tmp/openclaw-plugin-capture.patch \
  && node -e 'const fs = require("node:fs"); const file = "package.json"; const manifest = JSON.parse(fs.readFileSync(file, "utf8")); const command = "scripts/tsdown-build.mts"; if (manifest.scripts["build:docker"].split(command).length !== 2) throw new Error("expected one runtime compiler invocation"); manifest.scripts["build:docker"] = manifest.scripts["build:docker"].replace(command, command + " --concurrency 1"); fs.writeFileSync(file, JSON.stringify(manifest));' \
  && pnpm install --frozen-lockfile \
  && node /tmp/check-slack-routing.ts dependencies /app
+FROM openclaw-source AS openclaw-source-tests
 RUN pnpm test src/commands/doctor-config-flow*.test.ts src/flows/doctor-health-contributions.test.ts src/flows/doctor-health-contributions.auth-import-order.test.ts src/flows/doctor-health-contributions.availability.test.ts src/flows/doctor-health-contributions.legacy-state.test.ts src/agents/prepared-model-runtime.startup-registry.test.ts src/agents/prepared-model-runtime.plugin-context.test.ts src/agents/prepared-model-runtime.registry-borrow.test.ts src/plugins/loader.gateway-borrow.test.ts src/plugins/loader.async-preparation.test.ts src/gateway/server-plugins.test.ts src/gateway/server-startup-plugins.test.ts src/gateway/server-plugin-reload-recovery.test.ts --maxWorkers=1 \
  && pnpm test src/infra/sqlite-snapshot-prefetch.test.ts src/infra/sqlite-snapshot-cow.test.ts src/infra/sqlite-snapshot.file-id.test.ts src/infra/sqlite-snapshot.transfer.test.ts src/infra/update-database-restore.test.ts src/snapshot/git-backup-codec.test.ts src/snapshot/local-repository.test.ts src/infra/update-database-generations.test.ts src/infra/update-database-backup.test.ts src/infra/update-recovery-doctor-retention.test.ts src/plugins/plugin-generation-worker-codec.test.ts src/plugins/plugin-generation-worker.test.ts src/plugins/doctor-contract-registry.custody.test.ts src/state/openclaw-state-db-publication-authority.test.ts src/plugins/plugin-generation-artifact.hashing.test.ts src/plugins/plugin-generation-artifact.admission.test.ts src/plugins/plugin-native-admission-module-graph.test.ts src/plugins/plugin-generation-artifact.native-reference.test.ts src/plugins/plugin-source-capture-directory.test.ts src/plugins/plugin-source-capture-recovery.test.ts src/plugins/plugin-generation-artifact.streaming.test.ts src/plugins/plugin-source-file.copy.test.ts test/docker-entrypoint.test.ts src/state/openclaw-state-db-readonly.snapshot-admission.test.ts src/state/openclaw-state-db-readonly.signal-custody.test.ts --maxWorkers=1 \
  && pnpm test extensions/codex/doctor-contract-api.test.ts extensions/codex/doctor-contract-api.cold.test.ts extensions/codex/worker-entry-contract.test.ts extensions/codex/session-history-worker-runtime.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs src/plugins/hooks.resolve-inbound-route.test.ts src/channels/session.test.ts src/infra/outbound/session-context.test.ts src/infra/system-events.test.ts --maxWorkers=1 \
  && node scripts/run-vitest.mjs --config test/vitest/vitest.extension-slack.config.ts --maxWorkers=1
+FROM openclaw-source AS openclaw-build
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
 RUN set -eu; \
     selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "slack", "acpx"])].join(" "))')"; \

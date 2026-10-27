@@ -137,6 +137,9 @@ tailscale_field() {
 }
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
+  log "source regressions"
+  docker build --progress=plain --target openclaw-source-tests .
+  pass "the source regressions pass"
   log "build"
   docker build --progress=plain -t "$image" .
   pass "the image builds"

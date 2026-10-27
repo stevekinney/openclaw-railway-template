@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
@@ -172,5 +172,47 @@ test("rejects an upgrade that stops shipping the matched Slack channel", () => {
   fixture((root) => {
     rmSync(join(root, "dist/extensions/slack"), { recursive: true });
     assert.throws(() => verifyRuntimeRegistration(root), /slack.*package.json/);
+  });
+});
+
+
+test("keeps source regression artifacts outside the production build ancestry", () => {
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  const parents = new Map([...dockerfile.matchAll(/^FROM (\S+) AS (\S+)$/gm)].map((match) => [match[2], match[1]]));
+  assert.equal(parents.get("openclaw-source-tests"), "openclaw-source");
+  assert.equal(parents.get("openclaw-build"), "openclaw-source");
+  assert.equal(parents.get("openclaw-production"), "openclaw-build");
+  const tests = dockerfile.slice(dockerfile.indexOf("FROM openclaw-source AS openclaw-source-tests"), dockerfile.indexOf("FROM openclaw-source AS openclaw-build"));
+  assert.match(tests, /RUN pnpm test/);
+  assert.match(tests, /doctor-contract-registry\.custody\.test\.ts/);
+  assert.match(tests, /vitest\.extension-slack\.config\.ts/);
+});
+
+test("requires source regressions before image verification and stops if they fail", () => {
+  fixture((root) => {
+    const script = readFileSync(new URL("./image.test.sh", import.meta.url), "utf8");
+    const start = script.indexOf('if [ "${SKIP_BUILD:-0}" != 1 ]; then');
+    assert(start >= 0);
+    const end = script.indexOf("\nfi", start);
+    assert(end > start);
+    const block = script.slice(start, end + 3);
+    const binaries = join(root, "binaries");
+    mkdirSync(binaries);
+    writeFileSync(join(binaries, "docker"), [
+      "#!/bin/sh",
+      'printf "%s\\n" "$*" >> "$DOCKER_TEST_COMMANDS"',
+      'if [ "$FAIL_SOURCE_TESTS" = 1 ]; then',
+      '  case "$*" in *"--target openclaw-source-tests"*) exit 42 ;; esac',
+      "fi",
+    ].join("\n"), { mode: 0o755 });
+    const commands = join(root, "docker-commands");
+    const environment = { ...process.env, PATH: binaries + delimiter + process.env.PATH, SKIP_BUILD: "0", DOCKER_TEST_COMMANDS: commands, FAIL_SOURCE_TESTS: "0" };
+    const argumentsList = ["-eu", "-c", 'log() { :; }; pass() { :; }; image=fixture-image; ' + block];
+    execFileSync("sh", argumentsList, { env: environment, stdio: "pipe" });
+    const expected = ["build --progress=plain --target openclaw-source-tests .", "build --progress=plain -t fixture-image ."];
+    assert.deepEqual(readFileSync(commands, "utf8").trim().split("\n"), expected);
+    rmSync(commands);
+    assert.throws(() => execFileSync("sh", argumentsList, { env: { ...environment, FAIL_SOURCE_TESTS: "1" }, stdio: "pipe" }));
+    assert.deepEqual(readFileSync(commands, "utf8").trim().split("\n"), [expected[0]]);
   });
 });
