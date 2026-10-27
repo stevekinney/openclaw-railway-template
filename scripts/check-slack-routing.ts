@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { createRequire } from "node:module";
@@ -43,10 +43,12 @@ export function verifyInstalledDependencies(root: string): void {
 export function verifyRuntimeRegistration(root: string): void {
   const directory = mkdtempSync(join(tmpdir(), "slack-routing-contract-"));
   try {
+    const pluginDirectory = join(directory, "plugin");
+    mkdirSync(pluginDirectory, { mode: 0o700 });
     const receipt = join(directory, "registration.json");
-    writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "routing-contract-check", type: "module", openclaw: { extensions: ["./index.mjs"] } }));
-    writeFileSync(join(directory, "openclaw.plugin.json"), JSON.stringify({ id: "routing-contract-check", name: "Routing contract check", configSchema: { type: "object", additionalProperties: false, properties: {} } }));
-    writeFileSync(join(directory, "index.mjs"), `
+    writeFileSync(join(pluginDirectory, "package.json"), JSON.stringify({ name: "routing-contract-check", type: "module", openclaw: { extensions: ["./index.mjs"] } }));
+    writeFileSync(join(pluginDirectory, "openclaw.plugin.json"), JSON.stringify({ id: "routing-contract-check", name: "Routing contract check", configSchema: { type: "object", additionalProperties: false, properties: {} } }));
+    writeFileSync(join(pluginDirectory, "index.mjs"), `
       import assert from 'node:assert/strict';
       import { writeFileSync } from 'node:fs';
       export default { id: 'routing-contract-check', register(api) {
@@ -62,7 +64,7 @@ export function verifyRuntimeRegistration(root: string): void {
     const bundledAcpx = join(root, "dist/extensions/acpx");
     assert.equal(readObject(join(bundledSlack, "package.json")).version, readObject(join(root, "package.json")).version, "The image must contain its matched Slack channel.");
     const configuration = join(directory, "configuration.json");
-    writeFileSync(configuration, JSON.stringify({ channels: { slack: { enabled: true, botToken: "xoxb-test", appToken: "xapp-test" } }, plugins: { allow: ["routing-contract-check", "slack", "acpx"], load: { paths: [directory, bundledSlack, bundledAcpx] }, entries: { "routing-contract-check": { enabled: true }, slack: { enabled: true }, acpx: { enabled: true } } } }));
+    writeFileSync(configuration, JSON.stringify({ channels: { slack: { enabled: true, botToken: "xoxb-test", appToken: "xapp-test" } }, plugins: { allow: ["routing-contract-check", "slack", "acpx"], load: { paths: [pluginDirectory, bundledSlack, bundledAcpx] }, entries: { "routing-contract-check": { enabled: true }, slack: { enabled: true }, acpx: { enabled: true } } } }));
     // Registration must not contact Slack or any other provider during an image build.
     const guard = join(directory, "no-network.mjs");
     writeFileSync(guard, `

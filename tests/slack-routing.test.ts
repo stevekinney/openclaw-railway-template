@@ -167,6 +167,32 @@ test("does not accept a CLI success without executing runtime registration", () 
   });
 });
 
+test("keeps registration output and writable state outside the plugin source", () => {
+  fixture((root) => {
+    for (const plugin of ["slack", "acpx"]) {
+      writeFileSync(join(root, "dist/extensions", plugin, "index.js"), "export default {};");
+    }
+    writeFileSync(join(root, "openclaw.mjs"), `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { pathToFileURL } from 'node:url';
+      const configuration = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
+      const source = configuration.plugins.load.paths[0];
+      for (const writablePath of [process.env.OPENCLAW_STATE_DIR, process.env.OPENCLAW_CONFIG_PATH]) {
+        assert(!path.resolve(writablePath).startsWith(path.resolve(source) + path.sep), 'Writable state must not be captured as plugin source.');
+      }
+      const before = fs.readdirSync(source).toSorted();
+      const probe = await import(pathToFileURL(path.join(source, 'index.mjs')));
+      probe.default.register({ runtime: { channel: { routing: { inboundRouteContractVersion: 1, resolveInboundRoute() {} } } }, on() {}, registerInteractiveHandler() {} });
+      assert.deepEqual(fs.readdirSync(source).toSorted(), before, 'Registration output must not change the captured source.');
+      const pluginId = process.argv[4];
+      console.log(JSON.stringify({ plugin: { status: 'loaded', version: JSON.parse(fs.readFileSync(path.join(${JSON.stringify(root)}, 'package.json'), 'utf8')).version, source: path.join(${JSON.stringify(root)}, 'dist/extensions', pluginId, 'index.js') } }));
+    `);
+    verifyRuntimeRegistration(root);
+  });
+});
+
 
 test("rejects an upgrade that stops shipping the matched Slack channel", () => {
   fixture((root) => {
