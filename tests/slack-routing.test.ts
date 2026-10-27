@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { verifyCompositionLock, verifyInstalledDependencies, verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
+import { composeLockfileRootImporter, verifyCompositionLock, verifyInstalledDependencies, verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
 
 const BUNDLED_PLUGIN_IDS = ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"] as const;
 
@@ -193,8 +193,8 @@ test("pins an immutable patch and retains the upgrade gates", () => {
   assert.match(dockerfile, /generateNpmPackageLock\(directory, \{ installStrategy: "shallow" \}\)/);
   assert.match(dockerfile, /for plugin in acpx slack lobster firecrawl exa typesafe; do/);
   assert.match(dockerfile, /preparePackageBundledPlugins\("\/app", plugins/);
-  assert.match(dockerfile, /--lockfile-only.*--prefer-offline.*--ignore-scripts.*--no-frozen-lockfile/);
-  assert.doesNotMatch(dockerfile, /--lockfile-only[^\n]*--offline/);
+  assert.match(dockerfile, /composeLockfileRootImporter\(composedLock\.application, manifest, plugins\)/);
+  assert.doesNotMatch(dockerfile, /pnpm install --lockfile-only/);
   assert.match(dockerfile, /--select-bundled-plugin", "acpx"[\s\S]*--select-bundled-plugin", "typesafe"/);
   assert.match(dockerfile, /cp -a "\/tmp\/\$plugin-production-dependencies\/node_modules" "dist\/extensions\/\$plugin\/node_modules"/);
   assert.match(dockerfile, /check-slack-routing\.ts runtime \/app \/etc\/openclaw-slack-routing\.patch/);
@@ -305,7 +305,11 @@ function compositionFixture() {
       lockfileVersion: "9.0", settings: { autoInstallPeers: true }, overrides: { qs: "6.16.1" },
       packages: Object.fromEntries(additions.map((name) => [name + "@1.2.3", { resolution: { integrity: "sha512-fixture" } }])),
       snapshots: Object.fromEntries(additions.map((name) => [name + "@1.2.3", {}])),
-      importers: { ".": { dependencies: { kept: entry }, devDependencies: { acpx: entry, tool: entry } }, "extensions/exa": { dependencies: { kept: entry } } },
+      importers: {
+        ".": { dependencies: { kept: entry }, devDependencies: { acpx: entry, tool: entry } },
+        "extensions/acpx": { dependencies: Object.fromEntries(additions.filter((name) => name !== "acpx").map((name) => [name, entry])) },
+        "extensions/exa": { dependencies: { kept: entry } },
+      },
     },
   };
   const composed = structuredClone(original);
@@ -317,6 +321,13 @@ function compositionFixture() {
 
 test("composition validates the application document and the expected root additions", () => {
   const { original, composed, manifest } = compositionFixture();
+  verifyCompositionLock(original, composed, manifest);
+});
+
+test("composes the root lockfile importer from pinned workspace resolutions", () => {
+  const { original, manifest } = compositionFixture();
+  const composed = structuredClone(original);
+  composeLockfileRootImporter(composed.application, manifest, ["acpx"]);
   verifyCompositionLock(original, composed, manifest);
 });
 

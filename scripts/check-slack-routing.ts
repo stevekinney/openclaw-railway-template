@@ -15,6 +15,51 @@ function object(value: unknown, description: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/** Compose root lockfile imports from existing workspace resolutions without re-resolving the graph. */
+export function composeLockfileRootImporter(lockfile: unknown, manifestValue: unknown, pluginIds: readonly string[]): void {
+  const importers = object(object(lockfile, "pnpm lockfile").importers, "importers");
+  const root = object(importers["."], "root importer");
+  const manifest = object(manifestValue, "composed package manifest");
+  const dependencies = object(manifest.dependencies ?? {}, "root dependencies");
+  const optionalDependencies = object(manifest.optionalDependencies ?? {}, "root optional dependencies");
+  const rootDependencies = object(root.dependencies ?? {}, "original root dependencies");
+  const rootOptionalDependencies = object(root.optionalDependencies ?? {}, "original root optional dependencies");
+  const rootDevelopmentDependencies = object(root.devDependencies ?? {}, "original root development dependencies");
+  const pluginImporters = pluginIds.map((id) => object(importers[`extensions/${id}`], `selected plugin importer ${id}`));
+  const composedDependencies: Record<string, unknown> = {};
+  const composedOptionalDependencies: Record<string, unknown> = {};
+
+  const entryFor = (name: string, specifier: unknown): unknown => {
+    const existing = rootDependencies[name] ?? rootOptionalDependencies[name] ?? rootDevelopmentDependencies[name];
+    if (existing !== undefined) return existing;
+    for (const importer of pluginImporters) {
+      for (const section of ["dependencies", "optionalDependencies"]) {
+        const entries = object(importer[section] ?? {}, `${section} for selected plugin`);
+        const entry = entries[name];
+        if (entry !== undefined) {
+          assert.equal(object(entry, `lock entry for ${name}`).specifier, specifier, `Selected plugin lock entry has a different specifier for ${name}`);
+          return entry;
+        }
+      }
+    }
+    assert.fail(`No existing workspace lock entry can be transferred for ${name}@${String(specifier)}.`);
+  };
+
+  for (const [name, specifier] of Object.entries(dependencies)) composedDependencies[name] = entryFor(name, specifier);
+  for (const [name, specifier] of Object.entries(optionalDependencies)) {
+    if (!Object.hasOwn(composedDependencies, name)) composedOptionalDependencies[name] = entryFor(name, specifier);
+  }
+
+  root.dependencies = composedDependencies;
+  if (Object.keys(composedOptionalDependencies).length) root.optionalDependencies = composedOptionalDependencies;
+  else delete root.optionalDependencies;
+  const remainingDevelopmentDependencies = Object.fromEntries(
+    Object.entries(rootDevelopmentDependencies).filter(([name]) => !Object.hasOwn(composedDependencies, name) && !Object.hasOwn(composedOptionalDependencies, name)),
+  );
+  if (Object.keys(remainingDevelopmentDependencies).length) root.devDependencies = remainingDevelopmentDependencies;
+  else delete root.devDependencies;
+}
+
 /** Permit only the pinned composition's root importer changes, preserving all resolutions. */
 export function verifyCompositionLock(
   before: { environment: string | null; application: unknown },
