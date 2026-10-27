@@ -95,6 +95,14 @@ test("existing projects can preserve an enlarged volume during config apply", as
   }
 });
 
+test("deployment instructions read back the live volume size before config apply", async () => {
+  const deployment = await readFile(new URL("../documentation/DEPLOYMENT.md", import.meta.url), "utf8");
+  assert.match(deployment, /export OPENCLAW_RAILWAY_VOLUME_SIZE_MB=/);
+  assert.match(deployment, /railway status \\\s*--project[\s\S]*--json/);
+  assert.match(deployment, /select\(\.volume\.name == "openclaw-state"\).*\.sizeMB/s);
+  assert.match(deployment, /railway config plan[\s\S]*For an existing project, it must not show a change to `openclaw-state config\.sizeMB`[\s\S]*railway config apply/);
+});
+
 test("disposable SQLite inspection snapshots use container storage", () => {
   assert.equal(findService("openclaw").variables?.XDG_CACHE_HOME?.value, "/tmp");
 });
