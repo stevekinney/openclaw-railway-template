@@ -2169,7 +2169,7 @@ index 287cc4875b..0b87239caf 100644
    );
    host.onReady?.();
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 5798d3b83b..5b3aa91e5f 100644
+index 5798d3b83b..c0cc0c7ac0 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -163,6 +163,16 @@ settings:
@@ -2198,7 +2198,7 @@ index 5798d3b83b..5b3aa91e5f 100644
    follow-redirects: 1.16.1
    defu: 6.1.7
    fast-xml-parser: 5.11.2
-@@ -192,7 +202,7 @@ overrides:
+@@ -192,12 +202,15 @@ overrides:
    source-map-js: 1.2.2
    file-type: 22.1.1
    form-data: 4.0.6
@@ -2207,7 +2207,16 @@ index 5798d3b83b..5b3aa91e5f 100644
    mailauth@7.1.0>nodemailer: 10.0.13
    minimatch: 10.2.6
    path-to-regexp: 8.4.2
-@@ -226,10 +236,10 @@ importers:
+   proxy-addr: 2.0.8
+-  qs: 6.16.0
++  dompurify: 3.4.17
++  markdown-it: 15.0.3
++  katex: 0.18.2
++  qs: 6.16.1
+   node-domexception: npm:@nolyfill/domexception@1.0.28
+   typebox: 1.3.34
+   tar: 7.5.22
+@@ -226,10 +239,10 @@ importers:
      dependencies:
        '@agentclientprotocol/sdk':
          specifier: 1.7.0
@@ -2220,7 +2229,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@babel/generator':
          specifier: 8.0.6
          version: 8.0.6
-@@ -250,7 +260,7 @@ importers:
+@@ -250,7 +263,7 @@ importers:
          version: 1.0.0
        '@google/genai':
          specifier: 2.27.0
@@ -2229,7 +2238,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@grammyjs/transformer-throttler':
          specifier: 1.2.1
          version: 1.2.1(grammy@1.46.0(supports-color@10.2.2))
-@@ -265,7 +275,7 @@ importers:
+@@ -265,7 +278,7 @@ importers:
          version: 2.7.0(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -2238,7 +2247,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@mozilla/readability':
          specifier: 0.6.0
          version: 0.6.0
-@@ -277,7 +287,7 @@ importers:
+@@ -277,7 +290,7 @@ importers:
          version: 0.25.0
        '@openclaw/proxyline':
          specifier: 0.4.0
@@ -2247,7 +2256,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@silvia-odwyer/photon-node':
          specifier: 0.3.4
          version: 0.3.4
-@@ -373,7 +383,7 @@ importers:
+@@ -373,7 +386,7 @@ importers:
          version: 12.2.0
        openai:
          specifier: 7.27.0
@@ -2256,7 +2265,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        p-limit:
          specifier: 7.3.3
          version: 7.3.3
-@@ -405,8 +415,8 @@ importers:
+@@ -405,8 +418,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        undici:
@@ -2267,7 +2276,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        web-push:
          specifier: 3.6.7
          version: 3.6.7(supports-color@10.2.2)
-@@ -420,8 +430,8 @@ importers:
+@@ -420,8 +433,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -2278,7 +2287,22 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@a2ui/lit':
          specifier: 0.12.0
-@@ -623,8 +633,8 @@ importers:
+@@ -529,11 +542,11 @@ importers:
+         specifier: 2.0.3
+         version: 2.0.3
+       markdown-it:
+-        specifier: 15.0.2
+-        version: 15.0.2
++        specifier: 15.0.3
++        version: 15.0.3
+       markdown-it-anchor:
+         specifier: 10.0.0
+-        version: 10.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.2)
++        version: 10.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.3)
+       marked:
+         specifier: 18.0.14
+         version: 18.0.14
+@@ -623,8 +636,8 @@ importers:
    extensions/a2a:
      dependencies:
        zod:
@@ -2289,7 +2313,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -637,7 +647,7 @@ importers:
+@@ -637,7 +650,7 @@ importers:
      dependencies:
        '@agentclientprotocol/claude-agent-acp':
          specifier: 0.85.1
@@ -2298,7 +2322,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@agentclientprotocol/codex-acp':
          specifier: 2.1.1
          version: 2.1.1
-@@ -651,8 +661,8 @@ importers:
+@@ -651,8 +664,8 @@ importers:
          specifier: 1.9.0
          version: 1.9.0
        zod:
@@ -2309,7 +2333,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -668,10 +678,10 @@ importers:
+@@ -668,10 +681,10 @@ importers:
      dependencies:
        openai:
          specifier: 7.27.0
@@ -2323,7 +2347,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -709,7 +719,7 @@ importers:
+@@ -709,7 +722,7 @@ importers:
      dependencies:
        '@anthropic-ai/sdk':
          specifier: 0.131.0
@@ -2332,7 +2356,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@aws/bedrock-token-generator':
          specifier: 1.1.0
          version: 1.1.0
-@@ -728,13 +738,13 @@ importers:
+@@ -728,13 +741,13 @@ importers:
      dependencies:
        '@anthropic-ai/vertex-sdk':
          specifier: 0.20.2
@@ -2349,7 +2373,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -743,8 +753,8 @@ importers:
+@@ -743,8 +756,8 @@ importers:
    extensions/apple-fm:
      dependencies:
        zod:
@@ -2360,7 +2384,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -794,7 +804,7 @@ importers:
+@@ -794,7 +807,7 @@ importers:
      dependencies:
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -2369,7 +2393,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        chrome-devtools-mcp:
          specifier: 1.10.1
          version: 1.10.1(patch_hash=d31d6e7e187ea9fd4dad87ed3ad08073c77ffcfddd52bc4761b39a2dfce0ac1e)
-@@ -811,8 +821,8 @@ importers:
+@@ -811,8 +824,8 @@ importers:
          specifier: 22.0.0
          version: 22.0.0
        zod:
@@ -2380,7 +2404,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -821,8 +831,8 @@ importers:
+@@ -821,8 +834,8 @@ importers:
          specifier: 21.0.3
          version: 21.0.3
        undici:
@@ -2391,7 +2415,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    extensions/buzz:
      dependencies:
-@@ -830,8 +840,8 @@ importers:
+@@ -830,8 +843,8 @@ importers:
          specifier: 2.25.2
          version: 2.25.2(typescript@7.1.0-dev.20260922.1)
        zod:
@@ -2402,7 +2426,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -892,8 +902,8 @@ importers:
+@@ -892,8 +905,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -2413,7 +2437,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -949,8 +959,8 @@ importers:
+@@ -949,8 +962,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -2424,7 +2448,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1002,8 +1012,8 @@ importers:
+@@ -1002,8 +1015,8 @@ importers:
          specifier: 0.4.0
          version: 0.4.0
        zod:
@@ -2435,7 +2459,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1097,8 +1107,8 @@ importers:
+@@ -1097,8 +1110,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2446,7 +2470,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1131,14 +1141,14 @@ importers:
+@@ -1131,14 +1144,14 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        undici:
@@ -2465,7 +2489,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1221,8 +1231,8 @@ importers:
+@@ -1221,8 +1234,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2476,7 +2500,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1301,7 +1311,7 @@ importers:
+@@ -1301,7 +1314,7 @@ importers:
      dependencies:
        '@google/genai':
          specifier: 2.27.0
@@ -2485,7 +2509,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        dotenv:
          specifier: 18.0.5
          version: 18.0.5
-@@ -1335,8 +1345,8 @@ importers:
+@@ -1335,8 +1348,8 @@ importers:
          specifier: 11.1.0
          version: 11.1.0(supports-color@10.2.2)
        zod:
@@ -2496,7 +2520,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1394,8 +1404,8 @@ importers:
+@@ -1394,8 +1407,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2507,7 +2531,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1413,8 +1423,8 @@ importers:
+@@ -1413,8 +1426,8 @@ importers:
    extensions/irc:
      dependencies:
        zod:
@@ -2518,7 +2542,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1447,8 +1457,8 @@ importers:
+@@ -1447,8 +1460,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2529,7 +2553,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1460,8 +1470,8 @@ importers:
+@@ -1460,8 +1473,8 @@ importers:
    extensions/linux-node:
      dependencies:
        zod:
@@ -2540,7 +2564,18 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1550,8 +1560,8 @@ importers:
+@@ -1538,8 +1551,8 @@ importers:
+         specifier: 6.2.5
+         version: 6.2.5
+       markdown-it:
+-        specifier: 15.0.2
+-        version: 15.0.2
++        specifier: 15.0.3
++        version: 15.0.3
+       matrix-js-sdk:
+         specifier: 42.4.0
+         version: 42.4.0(patch_hash=12d9bb9bdc53b7b96d8d887d0bea6b3072d1fef488b51102caec19fb651c8e92)
+@@ -1550,8 +1563,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2551,7 +2586,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1563,8 +1573,8 @@ importers:
+@@ -1563,8 +1576,8 @@ importers:
    extensions/mattermost:
      dependencies:
        zod:
@@ -2562,7 +2597,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1602,7 +1612,7 @@ importers:
+@@ -1602,7 +1615,7 @@ importers:
          version: 21.2.0
        openai:
          specifier: 7.27.0
@@ -2571,7 +2606,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        typebox:
          specifier: 1.3.34
          version: 1.3.34
-@@ -1648,8 +1658,8 @@ importers:
+@@ -1648,8 +1661,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -2582,7 +2617,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/memory-core':
          specifier: workspace:*
-@@ -1748,8 +1758,8 @@ importers:
+@@ -1748,8 +1761,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2593,7 +2628,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@microsoft/teams.common':
          specifier: 2.1.0
-@@ -1770,8 +1780,8 @@ importers:
+@@ -1770,8 +1783,8 @@ importers:
          specifier: 0.9.0
          version: 0.9.0
        zod:
@@ -2604,7 +2639,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1780,8 +1790,8 @@ importers:
+@@ -1780,8 +1793,8 @@ importers:
    extensions/nextcloud-talk:
      dependencies:
        zod:
@@ -2615,7 +2650,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1796,8 +1806,8 @@ importers:
+@@ -1796,8 +1809,8 @@ importers:
          specifier: 2.25.2
          version: 2.25.2(typescript@7.1.0-dev.20260922.1)
        zod:
@@ -2626,7 +2661,18 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1888,8 +1898,8 @@ importers:
+@@ -1827,8 +1840,8 @@ importers:
+         specifier: 3.3.1
+         version: 3.3.1
+       markdown-it:
+-        specifier: 15.0.2
+-        version: 15.0.2
++        specifier: 15.0.3
++        version: 15.0.3
+       yaml:
+         specifier: 2.9.1
+         version: 2.9.1
+@@ -1888,8 +1901,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -2637,7 +2683,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1922,8 +1932,8 @@ importers:
+@@ -1922,8 +1935,8 @@ importers:
          specifier: 7.3.3
          version: 7.3.3
        zod:
@@ -2648,7 +2694,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1969,8 +1979,8 @@ importers:
+@@ -1969,8 +1982,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2659,7 +2705,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -1986,7 +1996,7 @@ importers:
+@@ -1986,7 +1999,7 @@ importers:
          version: 1.43.0(vitest@5.0.1)
        '@modelcontextprotocol/sdk':
          specifier: 1.32.0
@@ -2668,7 +2714,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@openclaw/crabline':
          specifier: 0.1.29
          version: 0.1.29
-@@ -2009,8 +2019,8 @@ importers:
+@@ -2009,8 +2022,8 @@ importers:
          specifier: 2.9.1
          version: 2.9.1
        zod:
@@ -2679,7 +2725,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/crabbox-provider':
          specifier: workspace:*
-@@ -2061,8 +2071,8 @@ importers:
+@@ -2061,8 +2074,8 @@ importers:
    extensions/raft:
      dependencies:
        zod:
@@ -2690,7 +2736,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2083,8 +2093,8 @@ importers:
+@@ -2083,8 +2096,8 @@ importers:
          specifier: 2.4.0
          version: 2.4.0
        zod:
@@ -2701,7 +2747,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2129,8 +2139,8 @@ importers:
+@@ -2129,8 +2142,8 @@ importers:
          specifier: 8.22.0
          version: 8.22.0
        zod:
@@ -2712,7 +2758,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2140,7 +2150,7 @@ importers:
+@@ -2140,7 +2153,7 @@ importers:
      dependencies:
        '@slack/bolt':
          specifier: 5.1.0
@@ -2721,7 +2767,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@slack/types':
          specifier: 3.2.0
          version: 3.2.0
-@@ -2154,11 +2164,11 @@ importers:
+@@ -2154,11 +2167,11 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        undici:
@@ -2737,7 +2783,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2179,8 +2189,8 @@ importers:
+@@ -2179,8 +2192,8 @@ importers:
    extensions/sms:
      dependencies:
        zod:
@@ -2748,7 +2794,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2195,8 +2205,8 @@ importers:
+@@ -2195,8 +2208,8 @@ importers:
    extensions/synology-chat:
      dependencies:
        zod:
@@ -2759,7 +2805,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2221,8 +2231,8 @@ importers:
+@@ -2221,8 +2234,8 @@ importers:
    extensions/team-reports:
      dependencies:
        zod:
@@ -2770,7 +2816,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2255,11 +2265,11 @@ importers:
+@@ -2255,11 +2268,11 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        undici:
@@ -2786,7 +2832,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2289,8 +2299,8 @@ importers:
+@@ -2289,8 +2302,8 @@ importers:
          specifier: 3.0.0
          version: 3.0.0
        zod:
@@ -2797,7 +2843,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2336,8 +2346,8 @@ importers:
+@@ -2336,8 +2349,8 @@ importers:
          specifier: 8.2.0
          version: 8.2.0(@twurple/auth@8.2.0)
        zod:
@@ -2808,7 +2854,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2377,8 +2387,8 @@ importers:
+@@ -2377,8 +2390,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2819,7 +2865,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2396,8 +2406,8 @@ importers:
+@@ -2396,8 +2409,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2830,7 +2876,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2471,8 +2481,8 @@ importers:
+@@ -2471,8 +2484,8 @@ importers:
          specifier: 1.3.34
          version: 1.3.34
        zod:
@@ -2841,7 +2887,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/gateway-client':
          specifier: workspace:*
-@@ -2499,8 +2509,8 @@ importers:
+@@ -2499,8 +2512,8 @@ importers:
          specifier: 1.261.0
          version: 1.261.0
        zod:
@@ -2852,7 +2898,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2537,8 +2547,8 @@ importers:
+@@ -2537,8 +2550,8 @@ importers:
    extensions/zalo:
      dependencies:
        zod:
@@ -2863,7 +2909,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2556,8 +2566,8 @@ importers:
+@@ -2556,8 +2569,8 @@ importers:
          specifier: 2.2.0
          version: 2.2.0
        zod:
@@ -2874,7 +2920,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@openclaw/plugin-sdk':
          specifier: workspace:*
-@@ -2600,16 +2610,16 @@ importers:
+@@ -2600,16 +2613,16 @@ importers:
      dependencies:
        '@anthropic-ai/sdk':
          specifier: 0.131.0
@@ -2894,7 +2940,33 @@ index 5798d3b83b..5b3aa91e5f 100644
        partial-json:
          specifier: 0.1.7
          version: 0.1.7
-@@ -2741,8 +2751,8 @@ importers:
+@@ -2668,11 +2681,11 @@ importers:
+         specifier: workspace:*
+         version: link:../normalization-core
+       markdown-it:
+-        specifier: 15.0.2
+-        version: 15.0.2
++        specifier: 15.0.3
++        version: 15.0.3
+       markdown-it-cjk-friendly:
+         specifier: 3.0.0
+-        version: 3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.2)
++        version: 3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.3)
+       mdast-util-from-markdown:
+         specifier: 2.0.3
+         version: 2.0.3(supports-color@10.2.2)
+@@ -2725,8 +2738,8 @@ importers:
+         specifier: workspace:*
+         version: link:../normalization-core
+       dompurify:
+-        specifier: 3.4.16
+-        version: 3.4.16
++        specifier: 3.4.17
++        version: 3.4.17
+       mermaid:
+         specifier: 12.1.0
+         version: 12.1.0
+@@ -2741,8 +2754,8 @@ importers:
          specifier: workspace:*
          version: link:../normalization-core
        zod:
@@ -2905,7 +2977,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    packages/net-policy:
      dependencies:
-@@ -2859,7 +2869,7 @@ importers:
+@@ -2859,7 +2872,7 @@ importers:
          version: 2.3.0
        '@modelcontextprotocol/ext-apps':
          specifier: 2.0.3
@@ -2914,7 +2986,33 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@noble/ed25519':
          specifier: 3.2.0
          version: 3.2.0
-@@ -2945,8 +2955,8 @@ importers:
+@@ -2912,8 +2925,8 @@ importers:
+         specifier: 3.17.11
+         version: 3.17.11
+       dompurify:
+-        specifier: 3.4.16
+-        version: 3.4.16
++        specifier: 3.4.17
++        version: 3.4.17
+       ghostty-web:
+         specifier: 0.4.0
+         version: 0.4.0(patch_hash=d4c6598b6840564dac4a469f3aa9b8df24fe6eab48a6744302707017e095a524)
+@@ -2930,11 +2943,11 @@ importers:
+         specifier: 3.3.3
+         version: 3.3.3
+       markdown-it:
+-        specifier: 15.0.2
+-        version: 15.0.2
++        specifier: 15.0.3
++        version: 15.0.3
+       markdown-it-cjk-friendly:
+         specifier: 3.0.0
+-        version: 3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.2)
++        version: 3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.3)
+       markdown-it-emoji:
+         specifier: 3.1.0
+         version: 3.1.0
+@@ -2945,8 +2958,8 @@ importers:
          specifier: 1.4.0
          version: 1.4.0
        zod:
@@ -2925,7 +3023,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      devDependencies:
        '@types/markdown-it':
          specifier: 14.2.0
-@@ -4761,7 +4771,7 @@ packages:
+@@ -4761,7 +4774,7 @@ packages:
      resolution: {integrity: sha512-Yd32LmKmu1kHrc7Wt8OHK0z+Tjc52fOfWYHl2znIGqskPrC/YaIKUgrhG4x7/oAemGMwBWHf3Eb3iaMKpZ/otg==}
      engines: {node: '>=22.19.0'}
      peerDependencies:
@@ -2934,7 +3032,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    '@openclaw/uirouter@0.1.2':
      resolution: {integrity: sha512-m2FOEvUfXXIrHa5VFJBV/1CtQt1NkvE9duGvURvExUCizryRGqSLlZdYvV+cXQqV4No4UPWhz2F5H+iNFNSljg==}
-@@ -4892,6 +4902,7 @@ packages:
+@@ -4892,6 +4905,7 @@ packages:
    '@opentelemetry/propagator-jaeger@2.11.0':
      resolution: {integrity: sha512-RUOqgoIqXOPQTOhpBrs07Y8sBlxVoLY5Fka6ueZ0prW+k6fWQsba/nHDY4gm+gmfuwtRqbX5Y9YKhDvktjbIqQ==}
      engines: {node: ^18.19.0 || >=20.6.0}
@@ -2942,7 +3040,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      peerDependencies:
        '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
-@@ -4922,12 +4933,14 @@ packages:
+@@ -4922,12 +4936,14 @@ packages:
    '@opentelemetry/sdk-trace-base@2.11.0':
      resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
      engines: {node: ^18.19.0 || >=20.6.0}
@@ -2957,7 +3055,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      peerDependencies:
        '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
-@@ -5576,7 +5589,7 @@ packages:
+@@ -5576,7 +5592,7 @@ packages:
      resolution: {integrity: sha512-F9T+FKbtsYRKV23X8l6WW1fx7ncqsMufg+HLA4ffHf/MvZSCvPunFw576ekmY0Q03kgTAIByTKDJxnM+wn1okg==}
      engines: {node: '>=20', npm: '>=9.6.4'}
      peerDependencies:
@@ -2966,7 +3064,18 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    '@slack/types@3.2.0':
      resolution: {integrity: sha512-IN4gdtlzQt8UJoj+1v+qAHeR4TxHO0KMlIs841SFfDQAcFFnsrWaGsEAE4goxVt8O/JOAFaGGdrFTzhNBop/Fg==}
-@@ -6630,8 +6643,8 @@ packages:
+@@ -6495,8 +6511,8 @@ packages:
+   argparse@2.0.1:
+     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
+-  argparse@3.0.2:
+-    resolution: {integrity: sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ==}
++  argparse@3.0.3:
++    resolution: {integrity: sha512-Sn98ftV3KfsO8xfLPHG6oT8y+b0yvbrLgZjgPDXsharNY15tTAjqIsIju4S32nl6/iEUNNE4v+yL2Zhm8ooP3w==}
+
+   asn1.js@5.4.1:
+     resolution: {integrity: sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA==}
+@@ -6630,8 +6646,8 @@ packages:
    bn.js@4.12.5:
      resolution: {integrity: sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==}
 
@@ -2977,7 +3086,18 @@ index 5798d3b83b..5b3aa91e5f 100644
      engines: {node: '>=18'}
 
    boolbase@2.0.0:
-@@ -7429,8 +7442,8 @@ packages:
+@@ -7201,8 +7217,8 @@ packages:
+     resolution: {integrity: sha512-gYzvtM72ZtxQO0T048kd6HWSbbGCNOUwcnfQ01cqIJ4X2IYKFFHZ5mKvrQETcFXxsRObZulDaKmy//R7TPtsBg==}
+     engines: {node: '>=20.19.0'}
+
+-  dompurify@3.4.16:
+-    resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
++  dompurify@3.4.17:
++    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
+
+   domutils@3.2.2:
+     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
+@@ -7429,8 +7445,8 @@ packages:
    fast-string-width@3.0.2:
      resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
@@ -2988,7 +3108,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    fast-wrap-ansi@0.2.2:
      resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
-@@ -7828,8 +7841,8 @@ packages:
+@@ -7828,8 +7844,8 @@ packages:
      resolution: {integrity: sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==}
      engines: {node: '>=12'}
 
@@ -2999,7 +3119,46 @@ index 5798d3b83b..5b3aa91e5f 100644
      engines: {node: '>= 12'}
 
    ipaddr.js@1.9.1:
-@@ -8880,7 +8893,7 @@ packages:
+@@ -8073,8 +8089,8 @@ packages:
+     resolution: {integrity: sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA==}
+     engines: {node: '>=18'}
+
+-  katex@0.16.47:
+-    resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
++  katex@0.18.2:
++    resolution: {integrity: sha512-3snve4y0SXTMequLim1FMiPvLGElySam0blN5xQZBqEY3lOJz1TnuaaiugnBZBqHzlSAGmFTYL7MCQkORuLKCA==}
+     hasBin: true
+
+   keyv@5.6.0:
+@@ -8356,14 +8372,14 @@ packages:
+     resolution: {integrity: sha512-Q8g7Z6OBdH3eXF0lujFqukIxUvgCDZcjzCrJxmD6QiEzU1HWR9fVN+Bf6gxmM+0yrPFs+jUw8gNjLmUQqt6Eew==}
+     peerDependencies:
+       '@types/markdown-it': '*'
+-      markdown-it: '*'
++      markdown-it: 15.0.3
+
+   markdown-it-cjk-friendly@3.0.0:
+     resolution: {integrity: sha512-y4OkqwenFXmb1i3w7qfh9E60qNX6U4KzECke8N/7io9SARFSvbR/wde0q/l6/Az9doieLOIw7ZsbDSgl27DR4g==}
+     engines: {node: '>=18'}
+     peerDependencies:
+       '@types/markdown-it': '>=14.2.0'
+-      markdown-it: '*'
++      markdown-it: 15.0.3
+     peerDependenciesMeta:
+       '@types/markdown-it':
+         optional: true
+@@ -8371,8 +8387,8 @@ packages:
+   markdown-it-emoji@3.1.0:
+     resolution: {integrity: sha512-NhmMEH2ywduD4Nty1E8uB5NqfLhAT1VR0dyvoJyStKOqCzbZmVdn/+8wj7zpDsb/fLBikpCPsWwxqKlvMmbz4g==}
+
+-  markdown-it@15.0.2:
+-    resolution: {integrity: sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==}
++  markdown-it@15.0.3:
++    resolution: {integrity: sha512-+Az7Ojz3iRGu8KYMvJ6xVhvrxP3eE+vEtJX75Ow88XBpcQNV/0lGX5ZynIIBftREo4DC2jsveAMDaeltmm8QvQ==}
+     hasBin: true
+
+   markdown-table@3.0.4:
+@@ -8880,7 +8896,7 @@ packages:
        '@aws-sdk/credential-provider-node': 3.972.84
        '@smithy/hash-node': '>=4.3.0 <5'
        '@smithy/signature-v4': '>=5.4.0 <6'
@@ -3008,7 +3167,18 @@ index 5798d3b83b..5b3aa91e5f 100644
        ws: ^8.21.0
        zod: ^3.25 || ^4.0
      peerDependenciesMeta:
-@@ -9939,8 +9952,8 @@ packages:
+@@ -9238,8 +9254,8 @@ packages:
+     engines: {node: '>=10.13.0'}
+     hasBin: true
+
+-  qs@6.16.0:
+-    resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
++  qs@6.16.1:
++    resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
+     engines: {node: '>=0.6'}
+
+   quansync@1.0.0:
+@@ -9939,8 +9955,8 @@ packages:
    undici-types@8.9.0:
      resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
@@ -3019,7 +3189,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      engines: {node: '>=22.19.0'}
 
    unhomoglyph@1.0.6:
-@@ -10322,11 +10335,8 @@ packages:
+@@ -10322,11 +10338,8 @@ packages:
    zod@3.25.76:
      resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
@@ -3033,7 +3203,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    zwitch@2.0.4:
      resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
-@@ -10353,32 +10363,32 @@ snapshots:
+@@ -10353,32 +10366,32 @@ snapshots:
        zod: 3.25.76
        zod-to-json-schema: 3.25.2(zod@3.25.76)
 
@@ -3076,7 +3246,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    '@antfu/install-pkg@2.1.0':
      dependencies:
-@@ -10409,11 +10419,11 @@ snapshots:
+@@ -10409,11 +10422,11 @@ snapshots:
    '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.286':
      optional: true
 
@@ -3092,7 +3262,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      optionalDependencies:
        '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.286
        '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.286
-@@ -10424,16 +10434,16 @@ snapshots:
+@@ -10424,16 +10437,16 @@ snapshots:
        '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.286
        '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.286
 
@@ -3113,7 +3283,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        google-auth-library: 11.1.0(supports-color@10.2.2)
      transitivePeerDependencies:
        - supports-color
-@@ -11629,7 +11639,7 @@ snapshots:
+@@ -11629,7 +11642,7 @@ snapshots:
      dependencies:
        koffi: 3.2.1
        vscode-jsonrpc: 8.2.1
@@ -3122,7 +3292,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      optionalDependencies:
        '@github/copilot-sdk-darwin-arm64': 1.0.16
        '@github/copilot-sdk-darwin-x64': 1.0.16
-@@ -11640,14 +11650,14 @@ snapshots:
+@@ -11640,14 +11653,14 @@ snapshots:
        '@github/copilot-sdk-win32-arm64': 1.0.16
        '@github/copilot-sdk-win32-x64': 1.0.16
 
@@ -3139,7 +3309,34 @@ index 5798d3b83b..5b3aa91e5f 100644
      transitivePeerDependencies:
        - bufferutil
        - supports-color
-@@ -12190,8 +12200,8 @@ snapshots:
+@@ -11912,7 +11925,7 @@ snapshots:
+       lodash.merge: 4.6.2
+       lodash.pickby: 4.6.0
+       protobufjs: 8.8.0
+-      qs: 6.16.0
++      qs: 6.16.1
+       ws: 8.22.0
+     transitivePeerDependencies:
+       - bufferutil
+@@ -12147,7 +12160,7 @@ snapshots:
+       '@microsoft/teams.common': 2.1.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+       '@opentelemetry/api': 1.9.1
+       jwt-decode: 4.0.0
+-      qs: 6.16.0
++      qs: 6.16.1
+     transitivePeerDependencies:
+       - debug
+       - supports-color
+@@ -12181,7 +12194,7 @@ snapshots:
+   '@microsoft/teams.graph@2.1.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
+     dependencies:
+       '@microsoft/teams.common': 2.1.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+-      qs: 6.16.0
++      qs: 6.16.1
+     transitivePeerDependencies:
+       - debug
+       - supports-color
+@@ -12190,8 +12203,8 @@ snapshots:
      dependencies:
        '@opentelemetry/semantic-conventions': 1.43.0
        ws: 8.22.0
@@ -3150,7 +3347,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      optionalDependencies:
        '@opentelemetry/api': 1.9.1
        '@opentelemetry/resources': 2.11.0(@opentelemetry/api@1.9.1)
-@@ -12208,20 +12218,20 @@ snapshots:
+@@ -12208,20 +12221,20 @@ snapshots:
        eventsource-parser: 3.1.1
        jose: 6.2.12
        pkce-challenge: 5.0.1
@@ -3176,7 +3373,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      dependencies:
        '@hono/node-server': 2.1.3(hono@4.13.12)
        ajv: 8.20.0
-@@ -12238,8 +12248,8 @@ snapshots:
+@@ -12238,8 +12251,8 @@ snapshots:
        json-schema-typed: 8.0.2
        pkce-challenge: 5.0.1
        raw-body: 3.0.2
@@ -3187,7 +3384,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      transitivePeerDependencies:
        - supports-color
 
-@@ -12350,7 +12360,7 @@ snapshots:
+@@ -12350,7 +12363,7 @@ snapshots:
        re2js: 2.8.6
        ws: 8.22.0
        yaml: 2.9.1
@@ -3196,7 +3393,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      transitivePeerDependencies:
        - bufferutil
        - utf-8-validate
-@@ -12423,9 +12433,9 @@ snapshots:
+@@ -12423,9 +12436,9 @@ snapshots:
      dependencies:
        ghostty-web: 0.4.0(patch_hash=d4c6598b6840564dac4a469f3aa9b8df24fe6eab48a6744302707017e095a524)
 
@@ -3208,7 +3405,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    '@openclaw/uirouter@0.1.2': {}
 
-@@ -13135,11 +13145,11 @@ snapshots:
+@@ -13135,11 +13148,11 @@ snapshots:
 
    '@sindresorhus/transliterate@2.3.1': {}
 
@@ -3222,7 +3419,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        '@slack/types': 3.2.0
        '@slack/web-api': 8.2.0
        '@types/express': 5.0.6
-@@ -13163,13 +13173,13 @@ snapshots:
+@@ -13163,13 +13176,13 @@ snapshots:
        '@types/node': 26.6.4
        jsonwebtoken: 9.0.3
 
@@ -3238,7 +3435,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    '@slack/types@3.2.0': {}
 
-@@ -14034,12 +14044,12 @@ snapshots:
+@@ -14034,12 +14047,12 @@ snapshots:
 
    acpx@0.19.4:
      dependencies:
@@ -3253,7 +3450,7 @@ index 5798d3b83b..5b3aa91e5f 100644
      transitivePeerDependencies:
        - bare-abort-controller
        - bare-buffer
-@@ -14070,7 +14080,7 @@ snapshots:
+@@ -14070,7 +14083,7 @@ snapshots:
    ajv@8.20.0:
      dependencies:
        fast-deep-equal: 3.1.3
@@ -3262,7 +3459,16 @@ index 5798d3b83b..5b3aa91e5f 100644
        json-schema-traverse: 1.0.0
        require-from-string: 2.0.2
 
-@@ -14222,7 +14232,7 @@ snapshots:
+@@ -14099,7 +14112,7 @@ snapshots:
+
+   argparse@2.0.1: {}
+
+-  argparse@3.0.2: {}
++  argparse@3.0.3: {}
+
+   asn1.js@5.4.1:
+     dependencies:
+@@ -14222,7 +14235,7 @@ snapshots:
 
    bn.js@4.12.5: {}
 
@@ -3271,7 +3477,25 @@ index 5798d3b83b..5b3aa91e5f 100644
      dependencies:
        bytes: 3.1.2
        content-type: 2.1.0
-@@ -14991,14 +15001,14 @@ snapshots:
+@@ -14230,7 +14243,7 @@ snapshots:
+       http-errors: 2.0.1
+       iconv-lite: 0.7.3
+       on-finished: 2.4.1
+-      qs: 6.16.0
++      qs: 6.16.1
+       raw-body: 3.0.2
+       type-is: 2.1.0
+     transitivePeerDependencies:
+@@ -14779,7 +14792,7 @@ snapshots:
+     dependencies:
+       domelementtype: 3.0.0
+
+-  dompurify@3.4.16:
++  dompurify@3.4.17:
+     optionalDependencies:
+       '@types/trusted-types': 2.0.7
+
+@@ -14991,14 +15004,14 @@ snapshots:
      dependencies:
        debug: 4.4.3(supports-color@10.2.2)
        express: 5.2.1(supports-color@10.2.2)
@@ -3288,7 +3512,16 @@ index 5798d3b83b..5b3aa91e5f 100644
        content-disposition: 1.1.0
        content-type: 1.0.5
        cookie: 0.7.2
-@@ -15052,7 +15062,7 @@ snapshots:
+@@ -15017,7 +15030,7 @@ snapshots:
+       once: 1.4.0
+       parseurl: 1.3.3
+       proxy-addr: 2.0.8
+-      qs: 6.16.0
++      qs: 6.16.1
+       range-parser: 1.3.0
+       router: 2.2.0(supports-color@10.2.2)
+       send: 1.2.1(supports-color@10.2.2)
+@@ -15052,7 +15065,7 @@ snapshots:
      dependencies:
        fast-string-truncated-width: 3.0.3
 
@@ -3297,7 +3530,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    fast-wrap-ansi@0.2.2:
      dependencies:
-@@ -15565,7 +15575,7 @@ snapshots:
+@@ -15565,7 +15578,7 @@ snapshots:
 
    internmap@2.0.3: {}
 
@@ -3306,7 +3539,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    ipaddr.js@1.9.1: {}
 
-@@ -15723,7 +15733,7 @@ snapshots:
+@@ -15723,7 +15736,7 @@ snapshots:
        parse5: 8.0.1
        saxes: 6.0.0
        tough-cookie: 6.0.2
@@ -3315,7 +3548,16 @@ index 5798d3b83b..5b3aa91e5f 100644
        w3c-xmlserializer: 6.0.0
        webidl-conversions: 8.0.1
        whatwg-mimetype: 5.0.0
-@@ -16074,7 +16084,7 @@ snapshots:
+@@ -15799,7 +15812,7 @@ snapshots:
+
+   jwt-decode@4.0.0: {}
+
+-  katex@0.16.47:
++  katex@0.18.2:
+     dependencies:
+       commander: 8.3.0
+
+@@ -16074,7 +16087,7 @@ snapshots:
        nodemailer: 10.0.13
        punycode.js: 2.3.1
        tldts: 7.4.15
@@ -3324,7 +3566,50 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    mailparser@3.9.33:
      dependencies:
-@@ -16790,14 +16800,14 @@ snapshots:
+@@ -16109,23 +16122,23 @@ snapshots:
+
+   markdown-extensions@2.0.0: {}
+
+-  markdown-it-anchor@10.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.2):
++  markdown-it-anchor@10.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.3):
+     dependencies:
+       '@types/markdown-it': 14.2.0
+-      markdown-it: 15.0.2
++      markdown-it: 15.0.3
+
+-  markdown-it-cjk-friendly@3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.2):
++  markdown-it-cjk-friendly@3.0.0(@types/markdown-it@14.2.0)(markdown-it@15.0.3):
+     dependencies:
+       get-east-asian-width: 1.7.0
+-      markdown-it: 15.0.2
++      markdown-it: 15.0.3
+     optionalDependencies:
+       '@types/markdown-it': 14.2.0
+
+   markdown-it-emoji@3.1.0: {}
+
+-  markdown-it@15.0.2:
++  markdown-it@15.0.3:
+     dependencies:
+-      argparse: 3.0.2
++      argparse: 3.0.3
+       entities: 8.1.0
+       linkify-it: 6.1.0
+       mdurl: 2.1.0
+@@ -16329,10 +16342,10 @@ snapshots:
+       d3-sankey: 0.12.3
+       dagre-d3-es: 7.0.14
+       dayjs: 1.11.23
+-      dompurify: 3.4.16
++      dompurify: 3.4.17
+       elkjs: 0.9.3
+       es-toolkit: 1.52.0
+-      katex: 0.16.47
++      katex: 0.18.2
+       khroma: 2.1.0
+       marked: 16.4.2
+       roughjs: 4.6.6
+@@ -16790,14 +16803,14 @@ snapshots:
        - encoding
      optional: true
 
@@ -3342,7 +3627,16 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    oxfmt@0.71.0:
      dependencies:
-@@ -17499,7 +17509,7 @@ snapshots:
+@@ -17131,7 +17144,7 @@ snapshots:
+       pngjs: 5.0.0
+       yargs: 15.4.1
+
+-  qs@6.16.0:
++  qs@6.16.1:
+     dependencies:
+       es-define-property: 1.0.1
+       side-channel: 1.1.1
+@@ -17499,7 +17512,7 @@ snapshots:
 
    socks@2.8.10:
      dependencies:
@@ -3351,7 +3645,7 @@ index 5798d3b83b..5b3aa91e5f 100644
        smart-buffer: 4.2.0
 
    sonic-boom@4.2.1:
-@@ -17905,7 +17915,7 @@ snapshots:
+@@ -17905,7 +17918,7 @@ snapshots:
 
    undici-types@8.9.0: {}
 
@@ -3360,7 +3654,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    unhomoglyph@1.0.6: {}
 
-@@ -18319,14 +18329,12 @@ snapshots:
+@@ -18319,14 +18332,12 @@ snapshots:
      dependencies:
        zod: 3.25.76
 
@@ -3379,7 +3673,7 @@ index 5798d3b83b..5b3aa91e5f 100644
 
    zwitch@2.0.4: {}
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
-index e9250bb88e..7aecb1f0a7 100644
+index e9250bb88e..21f4f2a0c6 100644
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
 @@ -10,6 +10,11 @@ minimumReleaseAgeStrict: true
@@ -3421,7 +3715,7 @@ index e9250bb88e..7aecb1f0a7 100644
    follow-redirects: 1.16.1
    defu: 6.1.7
    fast-xml-parser: 5.11.2
-@@ -62,7 +78,7 @@ overrides:
+@@ -62,12 +78,18 @@ overrides:
    source-map-js: 1.2.2
    file-type: 22.1.1
    form-data: 4.0.6
@@ -3430,6 +3724,18 @@ index e9250bb88e..7aecb1f0a7 100644
    "mailauth@7.1.0>nodemailer": 10.0.13
    minimatch: 10.2.6
    path-to-regexp: 8.4.2
+   proxy-addr: 2.0.8
+-  qs: 6.16.0
++  # GHSA-cg2g-xh64-v4q7: DOMPurify shadow-root template sanitization bypass.
++  dompurify: 3.4.17
++  # GHSA-gfr2-rv44-r23c and GHSA-vfgh-jcmw-g37q: markdown-it DoS.
++  markdown-it: 15.0.3
++  # GHSA-238p-pmpm-9mq7: KaTeX trust restrictions prototype pollution.
++  katex: 0.18.2
++  qs: 6.16.1
+   node-domexception: "npm:@nolyfill/domexception@1.0.28"
+   typebox: 1.3.34
+   tar: 7.5.22
 diff --git a/scripts/lib/bundled-plugin-dependency-links.mjs b/scripts/lib/bundled-plugin-dependency-links.mjs
 index d55d94ed39..3ca0219034 100644
 --- a/scripts/lib/bundled-plugin-dependency-links.mjs

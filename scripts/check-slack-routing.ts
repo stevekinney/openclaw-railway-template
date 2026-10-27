@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const BUNDLED_PLUGIN_IDS = ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"] as const;
@@ -75,6 +75,21 @@ function readObject(path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function packageManifestPath(packageRequire: ReturnType<typeof createRequire>, packageName: string): string {
+  let directory = dirname(packageRequire.resolve(packageName));
+  for (;;) {
+    const manifest = join(directory, "package.json");
+    if (existsSync(manifest)) return manifest;
+    const parent = dirname(directory);
+    assert.notEqual(parent, directory, `Could not find the installed ${packageName} package manifest.`);
+    directory = parent;
+  }
+}
+
+function packageVersion(packageRequire: ReturnType<typeof createRequire>, packageName: string): unknown {
+  return readObject(packageManifestPath(packageRequire, packageName)).version;
+}
+
 /** Refuse an image upgrade that still rebuilds a different upstream source revision. */
 export function verifySourceIdentity(root: string, releaseInformation: string, commit: string): void {
   const release = readObject(releaseInformation);
@@ -98,10 +113,21 @@ export function verifyRuntimeMetadata(root: string, patch: string): void {
 /** Check the resolved dependency before compilation as well as in the final image. */
 export function verifyInstalledDependencies(root: string): void {
   const require = createRequire(join(root, "package.json"));
-  assert.equal(readObject(require.resolve("zod/package.json")).version, "4.6.6", "The host Zod dependency must include the approved security fix.");
-  assert.equal(readObject(require.resolve("undici/package.json")).version, "8.12.3", "The host Undici dependency must include the approved security fixes.");
-  const expressRequire = createRequire(require.resolve("express/package.json"));
-  assert.equal(readObject(expressRequire.resolve("body-parser/package.json")).version, "2.4.0", "The Express body-parser dependency must include the approved security fix.");
+  assert.equal(packageVersion(require, "zod"), "4.6.6", "The host Zod dependency must include the approved security fix.");
+  assert.equal(packageVersion(require, "undici"), "8.12.3", "The host Undici dependency must include the approved security fixes.");
+  const expressRequire = createRequire(packageManifestPath(require, "express"));
+  assert.equal(packageVersion(expressRequire, "qs"), "6.16.1", "The Express qs dependency must include the approved security fix.");
+  assert.equal(packageVersion(expressRequire, "body-parser"), "2.4.0", "The Express body-parser dependency must include the approved security fix.");
+  const uiRequire = createRequire(join(root, "ui/package.json"));
+  assert.equal(packageVersion(uiRequire, "dompurify"), "3.4.17", "The UI DOMPurify dependency must include the approved security fixes.");
+  assert.equal(packageVersion(uiRequire, "markdown-it"), "15.0.3", "The UI markdown-it dependency must include the approved security fixes.");
+  const markdownRequire = createRequire(join(root, "packages/markdown-core/package.json"));
+  assert.equal(packageVersion(markdownRequire, "markdown-it"), "15.0.3", "The Markdown core dependency must include the approved security fixes.");
+  const mermaidRendererRequire = createRequire(join(root, "packages/mermaid-renderer/package.json"));
+  assert.equal(packageVersion(mermaidRendererRequire, "dompurify"), "3.4.17", "The Mermaid renderer DOMPurify dependency must include the approved security fixes.");
+  const mermaidRequire = createRequire(packageManifestPath(mermaidRendererRequire, "mermaid"));
+  assert.equal(packageVersion(mermaidRequire, "dompurify"), "3.4.17", "The Mermaid DOMPurify dependency must include the approved security fixes.");
+  assert.equal(packageVersion(mermaidRequire, "katex"), "0.18.2", "The Mermaid KaTeX dependency must include the approved security fix.");
 }
 
 /** Load an isolated plugin through the real host to verify its runtime routing API. */

@@ -20,9 +20,28 @@ function fixture(run: (root: string, patch: string, release: string) => void): v
     writeFileSync(join(root, "package.json"), JSON.stringify({ version: "1.0.0", type: "module", dependencies: { zod: "4.6.6" } }));
     mkdirSync(join(root, "node_modules/zod"), { recursive: true });
     writeFileSync(join(root, "node_modules/zod/package.json"), JSON.stringify({ name: "zod", version: "4.6.6" }));
-    for (const [name, version] of [["undici", "8.12.3"], ["express", "5.2.1"], ["express/node_modules/body-parser", "2.4.0"]]) {
-      mkdirSync(join(root, "node_modules", name), { recursive: true });
-      writeFileSync(join(root, "node_modules", name, "package.json"), JSON.stringify({ name, version }));
+    writeFileSync(join(root, "node_modules/zod/index.js"), "");
+    for (const owner of ["ui", "packages/markdown-core", "packages/mermaid-renderer"]) {
+      mkdirSync(join(root, owner), { recursive: true });
+      writeFileSync(join(root, owner, "package.json"), JSON.stringify({ name: owner, version: "1.0.0" }));
+    }
+    const dependencies = [
+      ["node_modules/undici", "undici", "8.12.3"],
+      ["node_modules/express", "express", "5.2.1"],
+      ["node_modules/express/node_modules/body-parser", "body-parser", "2.4.0"],
+      ["node_modules/express/node_modules/qs", "qs", "6.16.1"],
+      ["ui/node_modules/dompurify", "dompurify", "3.4.17"],
+      ["ui/node_modules/markdown-it", "markdown-it", "15.0.3"],
+      ["packages/markdown-core/node_modules/markdown-it", "markdown-it", "15.0.3"],
+      ["packages/mermaid-renderer/node_modules/dompurify", "dompurify", "3.4.17"],
+      ["packages/mermaid-renderer/node_modules/mermaid", "mermaid", "12.1.0"],
+      ["packages/mermaid-renderer/node_modules/mermaid/node_modules/dompurify", "dompurify", "3.4.17"],
+      ["packages/mermaid-renderer/node_modules/mermaid/node_modules/katex", "katex", "0.18.2"],
+    ] as const;
+    for (const [path, name, version] of dependencies) {
+      mkdirSync(join(root, path), { recursive: true });
+      writeFileSync(join(root, path, "package.json"), JSON.stringify({ name, version }));
+      writeFileSync(join(root, path, "index.js"), "");
     }
     const patch = join(root, "routing.patch");
     writeFileSync(patch, "complete routing patch");
@@ -113,12 +132,19 @@ test("rejects inherited host dependencies that differ from the patched source lo
 });
 
 for (const [dependency, version, message] of [
-  ["undici", "8.11.2", /host Undici dependency/],
-  ["express/node_modules/body-parser", "2.3.0", /Express body-parser dependency/],
+  ["node_modules/express/node_modules/qs", "6.16.0", /Express qs dependency/],
+  ["ui/node_modules/dompurify", "3.4.16", /UI DOMPurify dependency/],
+  ["ui/node_modules/markdown-it", "15.0.2", /UI markdown-it dependency/],
+  ["packages/markdown-core/node_modules/markdown-it", "15.0.2", /Markdown core dependency/],
+  ["packages/mermaid-renderer/node_modules/dompurify", "3.4.16", /Mermaid renderer DOMPurify dependency/],
+  ["packages/mermaid-renderer/node_modules/mermaid/node_modules/dompurify", "3.4.16", /Mermaid DOMPurify dependency/],
+  ["packages/mermaid-renderer/node_modules/mermaid/node_modules/katex", "0.16.47", /Mermaid KaTeX dependency/],
+  ["node_modules/undici", "8.11.2", /host Undici dependency/],
+  ["node_modules/express/node_modules/body-parser", "2.3.0", /Express body-parser dependency/],
 ] as const) {
   test(`rejects the vulnerable installed ${dependency} dependency`, () => {
     fixture((root, patch) => {
-      writeFileSync(join(root, "node_modules", dependency, "package.json"), JSON.stringify({ version }));
+      writeFileSync(join(root, dependency, "package.json"), JSON.stringify({ version }));
       assert.throws(() => verifyRuntimeMetadata(root, patch), message);
     });
   });
@@ -266,7 +292,7 @@ function compositionFixture() {
   const original = {
     environment: "package-manager-document",
     application: {
-      lockfileVersion: "9.0", settings: { autoInstallPeers: true }, overrides: { qs: "6.16.0" },
+      lockfileVersion: "9.0", settings: { autoInstallPeers: true }, overrides: { qs: "6.16.1" },
       packages: Object.fromEntries(additions.map((name) => [name + "@1.2.3", { resolution: { integrity: "sha512-fixture" } }])),
       snapshots: Object.fromEntries(additions.map((name) => [name + "@1.2.3", {}])),
       importers: { ".": { dependencies: { kept: entry }, devDependencies: { acpx: entry, tool: entry } }, "extensions/exa": { dependencies: { kept: entry } } },
