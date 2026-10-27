@@ -107,20 +107,17 @@ export function verifyRuntimeMetadata(root: string, patch: string): void {
   for (const pluginId of BUNDLED_PLUGIN_IDS) {
     assert.equal(readObject(join(root, "dist/extensions", pluginId, "package.json")).version, information.version, `The image must contain its matched ${pluginId} runtime.`);
   }
-  verifyInstalledDependencies(root);
+  verifyRuntimeDependencies(root);
 }
 
-/** Check the resolved dependency before compilation as well as in the final image. */
-export function verifyInstalledDependencies(root: string): void {
+/** Check dependencies that are copied into the final runtime image. */
+function verifyRuntimeDependencies(root: string): void {
   const require = createRequire(join(root, "package.json"));
   assert.equal(packageVersion(require, "zod"), "4.6.6", "The host Zod dependency must include the approved security fix.");
   assert.equal(packageVersion(require, "undici"), "8.12.3", "The host Undici dependency must include the approved security fixes.");
   const expressRequire = createRequire(packageManifestPath(require, "express"));
   assert.equal(packageVersion(expressRequire, "qs"), "6.16.1", "The Express qs dependency must include the approved security fix.");
   assert.equal(packageVersion(expressRequire, "body-parser"), "2.4.0", "The Express body-parser dependency must include the approved security fix.");
-  const uiRequire = createRequire(join(root, "ui/package.json"));
-  assert.equal(packageVersion(uiRequire, "dompurify"), "3.4.17", "The UI DOMPurify dependency must include the approved security fixes.");
-  assert.equal(packageVersion(uiRequire, "markdown-it"), "15.0.3", "The UI markdown-it dependency must include the approved security fixes.");
   const markdownRequire = createRequire(join(root, "packages/markdown-core/package.json"));
   assert.equal(packageVersion(markdownRequire, "markdown-it"), "15.0.3", "The Markdown core dependency must include the approved security fixes.");
   const mermaidRendererRequire = createRequire(join(root, "packages/mermaid-renderer/package.json"));
@@ -128,6 +125,19 @@ export function verifyInstalledDependencies(root: string): void {
   const mermaidRequire = createRequire(packageManifestPath(mermaidRendererRequire, "mermaid"));
   assert.equal(packageVersion(mermaidRequire, "dompurify"), "3.4.17", "The Mermaid DOMPurify dependency must include the approved security fixes.");
   assert.equal(packageVersion(mermaidRequire, "katex"), "0.18.2", "The Mermaid KaTeX dependency must include the approved security fix.");
+}
+
+/** Check source-only UI dependencies in the builder before the UI is bundled. */
+function verifySourceUiDependencies(root: string): void {
+  const uiRequire = createRequire(join(root, "ui/package.json"));
+  assert.equal(packageVersion(uiRequire, "dompurify"), "3.4.17", "The UI DOMPurify dependency must include the approved security fixes.");
+  assert.equal(packageVersion(uiRequire, "markdown-it"), "15.0.3", "The UI markdown-it dependency must include the approved security fixes.");
+}
+
+/** Check source and runtime dependencies before compilation in the builder. */
+export function verifyInstalledDependencies(root: string): void {
+  verifyRuntimeDependencies(root);
+  verifySourceUiDependencies(root);
 }
 
 /** Load an isolated plugin through the real host to verify its runtime routing API. */

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { verifyCompositionLock, verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
+import { verifyCompositionLock, verifyInstalledDependencies, verifyRuntimeMetadata, verifyRuntimeRegistration, verifySourceIdentity } from "../scripts/check-slack-routing.ts";
 
 const BUNDLED_PLUGIN_IDS = ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"] as const;
 
@@ -63,9 +63,11 @@ test("installs builder dependencies after patching the source and before compili
   const sourcePatch = dockerfile.indexOf("git apply /tmp/openclaw-plugin-capture.patch");
   const routingPatch = dockerfile.indexOf("git apply /tmp/openclaw-slack-routing.patch");
   const install = dockerfile.indexOf("pnpm install --frozen-lockfile");
+  const dependencyCheck = dockerfile.indexOf("check-slack-routing.ts dependencies /app");
   const tests = dockerfile.indexOf("RUN pnpm test");
-  assert(sourcePatch >= 0 && routingPatch >= 0 && install >= 0 && tests >= 0);
+  assert(sourcePatch >= 0 && routingPatch >= 0 && install >= 0 && dependencyCheck >= 0 && tests >= 0);
   assert(install > sourcePatch && install > routingPatch, "The builder must install the patched lockfile.");
+  assert(dependencyCheck > install && dependencyCheck < tests, "The builder must verify installed dependencies before compiling the image.");
   assert(install < tests, "The source tests and compiler must use the patched dependencies.");
 });
 
@@ -94,6 +96,13 @@ test("rejects source and image version disagreement", () => {
 
 test("accepts runtime metadata identifying the exact companion patch", () => {
   fixture((root, patch) => verifyRuntimeMetadata(root, patch));
+});
+
+test("runtime verification does not depend on source-only UI dependency links", () => {
+  fixture((root, patch) => {
+    rmSync(join(root, "ui"), { recursive: true, force: true });
+    verifyRuntimeMetadata(root, patch);
+  });
 });
 
 test("rejects an image without the routing contract", () => {
@@ -145,7 +154,7 @@ for (const [dependency, version, message] of [
   test(`rejects the vulnerable installed ${dependency} dependency`, () => {
     fixture((root, patch) => {
       writeFileSync(join(root, dependency, "package.json"), JSON.stringify({ version }));
-      assert.throws(() => verifyRuntimeMetadata(root, patch), message);
+      assert.throws(() => verifyInstalledDependencies(root), message);
     });
   });
 }
