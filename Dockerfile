@@ -80,7 +80,7 @@ RUN set -eu; \
       cp -a "/tmp/$plugin-production-dependencies/node_modules" "dist/extensions/$plugin/node_modules"; \
       cp "/tmp/$plugin-production-dependencies/package-lock.json" "dist/extensions/$plugin/package-lock.json"; \
     done; \
-    node --input-type=module -e 'import { linkSourcePluginDependencies } from "./scripts/lib/bundled-plugin-dependency-links.mjs"; for (const plugin of ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"]) linkSourcePluginDependencies("extensions/" + plugin, "dist/node_modules");'; \
+    node --input-type=module -e 'import { linkSourcePluginDependencies } from "./scripts/lib/bundled-plugin-dependency-links.mjs"; for (const plugin of ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"]) linkSourcePluginDependencies("extensions/" + plugin, "dist/node_modules", { includeBin: false });'; \
     mkdir /tmp/runtime-extension-sources; \
     for plugin in $selected_plugins; do cp -a "extensions/$plugin" /tmp/runtime-extension-sources/; done; \
     rm -rf node_modules/openclaw node_modules/.bin/openclaw; \

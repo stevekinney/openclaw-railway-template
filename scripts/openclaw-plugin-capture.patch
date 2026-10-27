@@ -3737,14 +3737,21 @@ index e9250bb88e..21f4f2a0c6 100644
    typebox: 1.3.34
    tar: 7.5.22
 diff --git a/scripts/lib/bundled-plugin-dependency-links.mjs b/scripts/lib/bundled-plugin-dependency-links.mjs
-index d55d94ed39..3ca0219034 100644
+index d55d94ed39..ebef818d6e 100644
 --- a/scripts/lib/bundled-plugin-dependency-links.mjs
 +++ b/scripts/lib/bundled-plugin-dependency-links.mjs
-@@ -15,6 +15,6 @@ export function linkSourcePluginDependencies(pluginDir, distNodeModules) {
+@@ -6,5 +6,5 @@
+  * Link every package installed under `<pluginDir>/node_modules` into `distNodeModules` so
+  * dependency lookups rooted at the packaged plugin resolve the plugin-owned install.
+  */
+-export function linkSourcePluginDependencies(pluginDir, distNodeModules) {
++export function linkSourcePluginDependencies(pluginDir, distNodeModules, { includeBin = true } = {}) {
+   const sourceModules = path.join(pluginDir, "node_modules");
+@@ -15,6 +15,6 @@ export function linkSourcePluginDependencies(pluginDir, distNodeModules, options) {
    }
    const packages = fs.readdirSync(sourceModules).flatMap((name) => {
 -    if (name.startsWith(".") && name !== ".bin") {
-+    if (name.startsWith(".")) {
++    if (name.startsWith(".") && (name !== ".bin" || !includeBin)) {
        return [];
      }
      return name.startsWith("@")
@@ -18611,7 +18618,7 @@ index 4cf860d7ee..e6bfaed749 100644
        // fs-safe wraps native failures; retain the disk-full code and detail that
        // plugin-load diagnostics use to explain how to recover.
 diff --git a/src/plugins/prune-docker-plugin-dist.test.ts b/src/plugins/prune-docker-plugin-dist.test.ts
-index 006734902a..7c9307970c 100644
+index 006734902a..db905c6381 100644
 --- a/src/plugins/prune-docker-plugin-dist.test.ts
 +++ b/src/plugins/prune-docker-plugin-dist.test.ts
 @@ -3,6 +3,7 @@ import fs from "node:fs";
@@ -18659,8 +18666,8 @@ index 006734902a..7c9307970c 100644
 +      fs.mkdirSync(privateBin, { recursive: true });
 +      fs.writeFileSync(path.join(privateBin, "private-cli"), "plugin bin");
 +    }
-+    linkSourcePluginDependencies(first, sharedModules);
-+    expect(() => linkSourcePluginDependencies(second, sharedModules)).toThrow(
++    linkSourcePluginDependencies(first, sharedModules, { includeBin: false });
++    expect(() => linkSourcePluginDependencies(second, sharedModules, { includeBin: false })).toThrow(
 +      /Conflicting bundled dependency shared-client:/,
 +    );
 +    expect(fs.readFileSync(path.join(sharedModules, ".bin", "gateway"), "utf8")).toBe("root bin");
