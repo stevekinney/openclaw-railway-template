@@ -155,6 +155,15 @@ run_image_admission_checks
 log "bundled tools"
 check "npm keeps downloaded packages in container storage" \
   'npm_cache_directory="$(docker run --rm --user node --entrypoint node "$image" /app/node_modules/npm/bin/npm-cli.js config get cache --workspaces=false)" && [ "$npm_cache_directory" = /tmp/npm ]'
+check "the runtime npm cache is writable as node" \
+  'docker run --rm --user node --entrypoint sh "$image" -c '\''
+    set -eu
+    cache_directory="$(npm config get cache --workspaces=false)"
+    mkdir -p "$cache_directory"
+    probe="$cache_directory/.openclaw-railway-cache-test-$$"
+    : > "$probe"
+    rm -f "$probe"
+  '\'''
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
   'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
 for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version" "command -v gog-login"; do

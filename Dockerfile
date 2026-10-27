@@ -123,7 +123,6 @@ RUN ln -s /app /app/node_modules/openclaw \
 # lifecycle, which refuses in-place self-updates and service installs.
 ENV OPENCLAW_HOME=/data \
     XDG_CACHE_HOME=/tmp \
-    NPM_CONFIG_CACHE=/tmp/npm \
     OPENCLAW_DOCKER_ACTIVATION_RECEIPT=/data/.openclaw/railway-image-activation.json \
     OPENCLAW_GATEWAY_PORT=18789 \
     OPENCLAW_SUPERVISOR_MODE=external \
@@ -276,6 +275,7 @@ RUN chmod 0444 /etc/openclaw-railway/openclaw.seed.json /usr/local/lib/openclaw-
 ENV HOME=/data/home \
     PATH=/usr/local/sbin:/data/home/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/home/node/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     NPM_CONFIG_PREFIX=/data/home/.local \
+    NPM_CONFIG_CACHE=/tmp/npm \
     HOMEBREW_NO_ANALYTICS=1 \
     HOMEBREW_NO_ENV_HINTS=1 \
     HOMEBREW_CACHE=/tmp/homebrew
