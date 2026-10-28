@@ -60,13 +60,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# The Gateway without Tailscale: loopback-only, reachable only from inside.
-start_gateway() {
-  docker run -d --name "$gateway" --network "$network" -v "$run_id-state:/data" \
-    -e OPENCLAW_GATEWAY_TOKEN="$token" -e OPENCLAW_RAILWAY_TEST_WITHOUT_TAILSCALE=1 -e OPENCLAW_DEBUG=1 \
-    -e OPENCLAW_RAILWAY_WEBHOOKS=on -e OPENCLAW_HOOKS_TOKEN="$hooks_token" \
-    "$image" node openclaw.mjs gateway --bind loopback --tailscale off --auth token >/dev/null
-}
 
 . tests/webhook-image.test.sh
 . tests/image-admission.test.sh
@@ -137,6 +130,9 @@ tailscale_field() {
 }
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
+  log "source regressions"
+  docker build --progress=plain --target openclaw-source-tests .
+  pass "the source regressions pass"
   log "build"
   docker build --progress=plain -t "$image" .
   pass "the image builds"
@@ -150,6 +146,17 @@ docker network create "$network" >/dev/null
 run_image_admission_checks
 
 log "bundled tools"
+check "npm keeps downloaded packages in container storage" \
+  'npm_cache_directory="$(docker run --rm --user node --entrypoint node "$image" /app/node_modules/npm/bin/npm-cli.js config get cache --workspaces=false)" && [ "$npm_cache_directory" = /tmp/npm ]'
+check "the runtime npm cache is writable as node" \
+  'docker run --rm --user node --entrypoint sh "$image" -c '\''
+    set -eu
+    cache_directory="$(npm config get cache --workspaces=false)"
+    mkdir -p "$cache_directory"
+    probe="$cache_directory/.openclaw-railway-cache-test-$$"
+    : > "$probe"
+    rm -f "$probe"
+  '\'''
 check "the GitHub CLI is installed for GitHub connections and runs as node" \
   'docker run --rm --user node --entrypoint gh "$image" --version | grep -E "^gh version [0-9]"'
 for tool_check in "gog --version" "jq --version" "tmux -V" "codex --version" "claude --version" "command -v gog-login"; do
@@ -321,6 +328,7 @@ check "the display-name patch is applied to OpenClaw's machine-name fallback" \
 check "HOME is on the volume in a root shell too" '[ "$(docker exec "$gateway" sh -c "echo \$HOME")" = /data/home ]'
 docker exec "$gateway" as-node sh -c 'echo kept > "$HOME/persist-check"'
 gateway_cli config set gateway.controlUi.communityInvite false >/dev/null 2>&1
+install_image_worker_probe
 check "a config change made from a root shell leaves no root-owned files" '[ -z "$(root_owned_state)" ]'
 docker exec "$gateway" touch /data/.openclaw/written-by-root /data/home/written-by-root /data/tailscale/written-by-root
 start_time="$(date +%s)"
@@ -330,6 +338,7 @@ check "SIGTERM stops the Gateway cleanly (exit 0)" '[ "$(docker inspect -f "{{.S
 check "graceful stop finished in ${stop_seconds}s" '[ "$stop_seconds" -lt 30 ]'
 docker start "$gateway" >/dev/null
 check "the Gateway starts again on the same volume" 'wait_for_startup'
+check_image_worker_probe
 check "a routine restart admits state without repeating Doctor" \
   '[ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation: Doctor completed successfully")" = 1 ] && [ "$(docker logs "$gateway" 2>&1 | grep -c "OpenClaw image activation unchanged: continuing to Gateway state admission")" = 1 ]'
 check "a routine restart preserves the activation receipt" \

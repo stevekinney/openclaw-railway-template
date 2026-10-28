@@ -19,7 +19,31 @@ const sourceBranch = environment.OPENCLAW_RAILWAY_BRANCH ?? "main";
 // explicitly: Railway fills them in when it creates a volume, and an undeclared
 // value shows up in every later plan as a destructive change back to "unset".
 const region = environment.OPENCLAW_RAILWAY_REGION ?? "us-west2";
-const volumeSizeMB = 5000;
+// Existing deployments can preserve a deliberately enlarged volume when
+// applying this file; new template installs keep the smaller default.
+const volumeSizeMB = Number(environment.OPENCLAW_RAILWAY_VOLUME_SIZE_MB ?? 5000);
+if (!Number.isSafeInteger(volumeSizeMB) || volumeSizeMB < 5000) {
+  throw new Error("OPENCLAW_RAILWAY_VOLUME_SIZE_MB must be an integer of at least 5000.");
+}
+const bundledPlugins = ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"];
+const startCommand = [
+  "openclaw-railway-entrypoint",
+  "tini",
+  "-s",
+  "--",
+  "node",
+  "/app/docker-entrypoint.mjs",
+  "node",
+  "/app/openclaw.mjs",
+  ...bundledPlugins.flatMap((plugin) => ["--select-bundled-plugin", plugin]),
+  "gateway",
+  "--bind",
+  "loopback",
+  "--tailscale",
+  "serve",
+  "--auth",
+  "token",
+].join(" ");
 
 export default defineRailway(() => {
   if (sourceRepository.startsWith("<")) {
@@ -42,6 +66,9 @@ export default defineRailway(() => {
     // volume between replicas: exactly one instance, in the volume's region.
     replicas: { [region]: 1 },
     deploy: {
+      // Service-level commands replace the image CMD, so keep its full plugin
+      // selection and startup wrappers explicit in Railway-managed projects.
+      startCommand,
       requiredMountPath: "/data",
       // /startupz is 200 once the Gateway admits traffic, which includes
       // Tailscale Serve being up. It ignores channel health, so a revoked
@@ -63,12 +90,16 @@ export default defineRailway(() => {
       // Doctor's disposable SQLite read snapshots belong on fast container
       // storage; HOME is on the slower persistent volume for credentials.
       XDG_CACHE_HOME: "/tmp",
+      NPM_CONFIG_CACHE: "/tmp/npm",
       // The marketplace template uses this supported variable because its
       // editor exposes the health path without a timeout field.
       RAILWAY_HEALTHCHECK_TIMEOUT_SEC: "600",
       OPENCLAW_GATEWAY_TOKEN: preserve(),
+      OPENCLAW_GATEWAY_STARTUP_TRACE: preserve(),
+      OPENCLAW_PLUGIN_LIFECYCLE_TRACE: preserve(),
       // Used once, to log the container in to your tailnet on first boot.
       TS_AUTHKEY: preserve(),
+      TS_HOSTNAME: preserve(),
       ANTHROPIC_API_KEY: preserve(),
       // The Gateway's name in OpenClaw's machine picker. The Tailscale machine
       // name, and so the tailnet address, is derived from it at first login

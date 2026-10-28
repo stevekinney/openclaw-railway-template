@@ -32,7 +32,7 @@ way in is Tailscale Serve, which OpenClaw configures and owns.
 
 ## The OpenClaw service
 
-The image extends the pinned OpenClaw release with the reviewed capture and activation patch, Tailscale's two binaries, and the tools skills need. Runtime bundles are rebuilt from the pinned upstream source; production dependencies and plugin selection come from the release image:
+The image extends the pinned OpenClaw release with the reviewed capture and activation patch, Tailscale's two binaries, and the tools skills need. Runtime bundles are rebuilt from the pinned upstream source. The release supplies the baseline plugin selection. The build adds Slack and ACPX and installs all production dependencies from the patched source lockfile. Their image-owned paths follow host upgrades. The builder and runtime verify the installed security dependency versions, and both companion production installs must pass a dependency audit. The build checks both plugins through the real loader before accepting the image:
 
 - `scripts/entrypoint.sh` (mostly comments and error messages) runs as root,
   validates the environment, prepares the volume, writes
@@ -53,7 +53,7 @@ The image extends the pinned OpenClaw release with the reviewed capture and acti
 
 After the privilege drop, everything runs as `node` (uid 1000):
 
-Railway sets `XDG_CACHE_HOME=/tmp` so disposable SQLite inspection snapshots use container storage. `HOME=/data/home` still keeps tool credentials and settings on the volume. Durable Doctor recovery captures and migration backups remain on `/data`.
+Railway sets `XDG_CACHE_HOME=/tmp` so disposable SQLite inspection snapshots and OpenClaw's npm download cache use container storage. `NPM_CONFIG_CACHE=/tmp/npm` also covers commands that invoke npm directly. Explicit per-operation npm cache directories still take precedence. `HOME=/data/home` keeps tool credentials and settings on the volume. Durable Doctor recovery captures and migration backups remain on `/data`.
 
 ```text
 PID 1  tini -s --                      signal forwarding, zombie reaping

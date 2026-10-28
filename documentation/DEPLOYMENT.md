@@ -25,6 +25,8 @@ project on 2026-10-08.
   the first connection is trust-on-first-use: accept the prompt once in an
   interactive terminal.
 - Node.js 24+ (to evaluate `.railway/railway.ts`).
+- `jq` when applying Infrastructure as Code to an existing project, to read its
+  current volume size from Railway.
 - A Tailscale tailnet with MagicDNS and
   [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled.
   Serve requires them; there is no plaintext fallback.
@@ -54,13 +56,32 @@ Point `.railway/railway.ts` at your fork: edit `sourceRepository` in the file
 (it then travels with your fork), or export the variable for this shell:
 
 ```bash
-export OPENCLAW_RAILWAY_REPOSITORY=<you>/<your-fork>
-railway config plan
-railway config apply
+export OPENCLAW_RAILWAY_REPOSITORY="your-github-owner/your-fork"
 ```
 
-The plan shows one service (`openclaw`), one volume (`openclaw-state` at
-`/data`), and no domains.
+The `5,000 MB` volume size is only the default for a new project. Before planning or applying IaC to an existing project, read back its current volume size and export it so the plan cannot request a decrease:
+
+```bash
+export OPENCLAW_RAILWAY_PROJECT_ID="replace-with-project-id"
+export OPENCLAW_RAILWAY_ENVIRONMENT=production
+export OPENCLAW_RAILWAY_VOLUME_SIZE_MB="$(
+  railway status \
+    --project "$OPENCLAW_RAILWAY_PROJECT_ID" \
+    --environment "$OPENCLAW_RAILWAY_ENVIRONMENT" \
+    --json |
+    jq -er '[.environments.edges[].node.volumeInstances.edges[].node
+      | select(.volume.name == "openclaw-state") | .sizeMB]
+      | if length == 1 then .[0] else error("Expected one openclaw-state volume") end'
+)"
+```
+
+Now plan and review the result before applying:
+
+```bash
+railway config plan
+```
+
+The plan shows one service (`openclaw`), one volume (`openclaw-state` at `/data`), and no domains. For an existing project, it must not show a change to `openclaw-state config.sizeMB`; stop and re-read the live volume size if it does. Only then run `railway config apply`.
 
 Railway builds the service immediately. The first deploy fails, as expected:
 the entrypoint refuses to start until step 3 sets its variables.

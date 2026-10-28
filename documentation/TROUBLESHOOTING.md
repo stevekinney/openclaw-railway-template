@@ -48,13 +48,7 @@ files to silence it**; they are the recovery inputs.
 
 ## `railway config plan` proposes a destructive volume change
 
-`Update <volume> config.region` (or `config.sizeMB`) marked destructive means the
-volume's actual placement differs from `region` / `volumeSizeMB` in
-`.railway/railway.ts`. Don't apply it: Railway accepts the change and leaves the
-volume where it is (observed). Either set the constants to the volume's real
-values (`railway config pull --json` shows them), or move the service's region in
-the dashboard; the volume migrates with the service on its next deploy. See
-[DEPLOYMENT.md](DEPLOYMENT.md#1-create-the-railway-project).
+`Update <volume> config.region` (or `config.sizeMB`) marked destructive means the volume's actual placement differs from `region` / `volumeSizeMB` in `.railway/railway.ts`. Railway marks a volume decrease destructive, and its [volume reference](https://docs.railway.com/volumes/reference) says down-sizing is unsupported. For an existing volume larger than the 5,000 MB new-project default, set `OPENCLAW_RAILWAY_VOLUME_SIZE_MB` to its current `sizeMB` from `railway status --json`, as shown in [DEPLOYMENT.md](DEPLOYMENT.md#2-create-the-service-and-its-volume), then plan again and confirm the plan contains no `config.sizeMB` change. `railway config pull --json` also shows the current volume size. For a region mismatch, move the service's region in the dashboard; the volume migrates with the service on its next deploy. See [DEPLOYMENT.md](DEPLOYMENT.md#1-create-the-railway-project).
 
 ## The deploy health check fails
 
