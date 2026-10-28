@@ -53,6 +53,14 @@ test("the Codex worker is selected for both Docker build and production pruning"
   assert.equal((dockerfile.match(/readdirSync\("\/tmp\/release-extensions"\), "codex"/g) ?? []).length, 2);
 });
 
+test("the Docker build refreshes the dist inventory after pruning generated artifacts", async () => {
+  const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+  const buildStage = dockerfile.split("FROM openclaw-build AS openclaw-production", 1)[0] ?? "";
+  const prune = buildStage.indexOf('node scripts/prune-docker-plugin-dist.mjs');
+  const inventory = buildStage.indexOf('await writePackageDistInventory(process.cwd())');
+  assert.ok(prune >= 0 && inventory > prune, "the inventory must match the generated, pruned Docker dist");
+});
+
 test("a worker failure, empty history, or placeholder result cannot satisfy the image gate", () => {
   for (const value of [{ result: { status: "rejected", reason: "history_read_failed" } }, { result: { status: "ok", value: [] } }, { result: { status: "ok", value: [{}, {}, {}] } }]) {
     assert.throws(() => verifyWorkerResult(value));

@@ -51,7 +51,8 @@ RUN set -eu; \
     node -e 'const fs = require("node:fs"); const file = "dist/build-info.json"; const information = JSON.parse(fs.readFileSync(file, "utf8")); information.railwayPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-plugin-capture.patch")); information.slackRoutingPatchDigest = require("node:crypto").hash("sha256", fs.readFileSync("/tmp/openclaw-slack-routing.patch")); information.slackRoutingContractVersion = 1; fs.writeFileSync(file, JSON.stringify(information));'; \
     OPENCLAW_EXTENSIONS="$selected_plugins" node scripts/prune-docker-plugin-dist.mjs; \
     find dist -name node_modules -prune -exec rm -rf {} +; \
-    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete; \
+    node --import ./scripts/tsx.mjs --input-type=module -e 'import { writePackageDistInventory } from "./scripts/lib/package-dist-inventory.ts"; await writePackageDistInventory(process.cwd());'
 
 # Compose the six hosted plugins into the root package before the production
 # install. The canonical helper owns manifest/inventory cleanup; only its
