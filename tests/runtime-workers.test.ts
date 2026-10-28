@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -46,6 +46,11 @@ test("worker host and build versions must match", async () => {
     await writeFile(join(root, "dist/build-info.json"), JSON.stringify({ version: "2.0.0" }));
     await assert.rejects(verifyHostLink(root), /version mismatch/);
   });
+});
+
+test("the Codex worker is selected for both Docker build and production pruning", async () => {
+  const dockerfile = await readFile(new URL("../Dockerfile", import.meta.url), "utf8");
+  assert.equal((dockerfile.match(/readdirSync\("\/tmp\/release-extensions"\), "codex"/g) ?? []).length, 2);
 });
 
 test("a worker failure, empty history, or placeholder result cannot satisfy the image gate", () => {

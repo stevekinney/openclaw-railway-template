@@ -44,7 +44,7 @@ RUN pnpm test src/commands/doctor-config-flow*.test.ts src/flows/doctor-health-c
 FROM openclaw-source AS openclaw-build
 COPY --from=openclaw-release /app/dist/extensions/ /tmp/release-extensions/
 RUN set -eu; \
-    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"])].join(" "))')"; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "codex", "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"])].join(" "))')"; \
     OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugins" pnpm build:docker; \
     node --import ./scripts/tsx.mjs --input-type=module -e 'import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { generateNpmPackageLock, packageJsonForNpmLock, readNpmLockOverrides } from "./scripts/generate-npm-package-lock.mts"; import { resolveNpmRunner } from "./scripts/npm-runner.mts"; for (const plugin of ["acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"]) { const directory = "/tmp/" + plugin + "-production-dependencies"; fs.mkdirSync(directory); const { name, version, dependencies, optionalDependencies } = JSON.parse(fs.readFileSync("extensions/" + plugin + "/package.json", "utf8")); const manifest = { name, version, dependencies, optionalDependencies }; fs.writeFileSync(directory + "/package.json", JSON.stringify(packageJsonForNpmLock(manifest, readNpmLockOverrides(manifest, directory)))); fs.writeFileSync(directory + "/package-lock.json", generateNpmPackageLock(directory, { installStrategy: "shallow" })); const runner = resolveNpmRunner({ npmArgs: ["ci", "--install-strategy=shallow", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-fund", "--workspaces=false"] }); execFileSync(runner.command, runner.args, { cwd: directory, stdio: "inherit" }); const audit = resolveNpmRunner({ npmArgs: ["audit", "--omit=dev", "--omit=peer", "--audit-level=low", "--workspaces=false"] }); execFileSync(audit.command, audit.args, { cwd: directory, stdio: "inherit" }); }'; \
     pnpm ui:build; \
@@ -64,7 +64,7 @@ FROM openclaw-build AS openclaw-production
 RUN set -eu; \
     rm -rf node_modules ui/node_modules; \
     find packages extensions -name node_modules -prune -exec rm -rf {} +; \
-    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"])].join(" "))')"; \
+    selected_plugins="$(node -e 'process.stdout.write([...new Set([...require("node:fs").readdirSync("/tmp/release-extensions"), "codex", "acpx", "slack", "lobster", "firecrawl", "exa", "typesafe"])].join(" "))')"; \
     set -- --filter . --filter ./ui --filter './packages/*'; \
     for plugin in $selected_plugins; do set -- "$@" --filter "./extensions/$plugin"; done; \
     NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile --prod "$@" \
