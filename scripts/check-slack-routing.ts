@@ -146,6 +146,25 @@ export async function composeSourceLockfile(root: string): Promise<void> {
   }
 }
 
+/** Inventory the source-built Docker runtime, including artifacts excluded from npm packages. */
+export async function writeDockerDistInventory(root: string): Promise<void> {
+  const sourceFile = (relativePath: string) => pathToFileURL(join(root, relativePath)).href;
+  const [{ collectPackageDistInventory, collectPackageDistContentInventory }, { writeJson }, contract] = await Promise.all([
+    import(sourceFile("src/infra/package-dist-inventory.ts")),
+    import(sourceFile("src/infra/json-files.ts")),
+    import(sourceFile("scripts/lib/package-dist-inventory-contract.mts")),
+  ]);
+  const files = await collectPackageDistInventory(root, { includePackageExcludedFiles: true });
+  const contentPath = contract.PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH;
+  const content = await collectPackageDistContentInventory(root, files);
+  await writeJson(join(root, contentPath), content, { mode: 0o644, trailingNewline: true });
+  await writeJson(
+    join(root, contract.PACKAGE_DIST_INVENTORY_RELATIVE_PATH),
+    [...new Set([...files, contentPath])].toSorted(),
+    { mode: 0o644, trailingNewline: true },
+  );
+}
+
 function readObject(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   assert(value && typeof value === "object" && !Array.isArray(value), `Expected object: ${path}`);
