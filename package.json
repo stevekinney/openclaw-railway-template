@@ -14,8 +14,8 @@
     "test:scripts": "node --test tests/tailscale-hostname.test.ts tests/slack-routing.test.ts tests/entrypoint-ownership.test.ts tests/runtime-workers.test.ts tests/sidecar-security.test.ts tests/webhook-security.test.ts"
   },
   "devDependencies": {
-    "@types/node": "24.19.1",
-    "railway": "3.13.0",
+    "@types/node": "24.19.2",
+    "railway": "3.16.0",
     "typescript": "7.0.2"
   }
 }
