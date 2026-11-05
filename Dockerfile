@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
-FROM node:24.22.1-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS runtime-node
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS runtime-node
 
 # Tailscale runs inside this container, next to the Gateway; only its two
 # binaries are taken from the official image. Dependabot tracks this pin.
@@ -12,7 +12,7 @@ FROM ghcr.io/openclaw/openclaw:2026.10.5@sha256:f40d1e66fd14d8c5b49c832f4100f83b
 # Rebuild the pinned release with the reviewed cold-capture engine fix. Keep the
 # patch tied to this source revision; an upstream upgrade must revalidate it.
 FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS bun
-FROM node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4 AS openclaw-source
+FROM node:26-bookworm@sha256:fa52d1669505e29b58c042875b1d65c229e0787a3610fd52869b22b68e480853 AS openclaw-source
 WORKDIR /app
 ENV GIT_COMMIT=1b58cb9a1b4f4353e1add63c8506db4d890962e8 \
     OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
