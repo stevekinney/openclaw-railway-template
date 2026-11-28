@@ -1,6 +1,6 @@
 # OpenClaw on Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/openclaw-private-gateway?utm_medium=integration&utm_source=button&utm_campaign=openclaw-private-gateway)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/openclaw-private-g-1?referralCode=MipbGH&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 A minimal Railway deployment of the [OpenClaw](https://openclaw.ai) Gateway,
 reachable only through Tailscale.
@@ -58,41 +58,41 @@ with Railway Infrastructure as Code (`.railway/railway.ts`).
 
 ## Documentation
 
-| Document | What it covers |
-| --- | --- |
-| [QUICKSTART.md](documentation/QUICKSTART.md) | Template deploy to a paired Mac app in about 15 minutes |
-| [DEPLOYMENT.md](documentation/DEPLOYMENT.md) | Step-by-step deployment and onboarding; publishing as a Railway template |
-| [ARCHITECTURE.md](documentation/ARCHITECTURE.md) | Design, access options compared, why proxy attribution can't fail, what Railway owns |
-| [CONFIGURATION.md](documentation/CONFIGURATION.md) | Every variable and setting, build-time vs runtime, what lives on the volume |
-| [TOOLS.md](documentation/TOOLS.md) | CLI tools for skills, logging them in, keeping them current, adding more |
-| [WEBHOOKS.md](documentation/WEBHOOKS.md) | Opt-in public webhooks and Gmail push, with a restricted reader agent |
-| [TAILSCALE.md](documentation/TAILSCALE.md) | Access policy, auth keys, tags, key expiry, rotation |
-| [DESKTOP.md](documentation/DESKTOP.md) | Connecting and pairing the macOS app |
-| [SECURITY.md](documentation/SECURITY.md) | Infrastructure controls, the security audit, recommended agent policy |
-| [UPGRADING.md](documentation/UPGRADING.md) | Upgrades, backups, rollbacks |
-| [TROUBLESHOOTING.md](documentation/TROUBLESHOOTING.md) | Symptoms and fixes |
-| [RAILWAY_TEMPLATE.md](documentation/RAILWAY_TEMPLATE.md) | The published template's readme, as shown on the Railway template page |
-| [ACCEPTANCE_CRITERIA.md](documentation/ACCEPTANCE_CRITERIA.md) | What is verified, what still needs a live deployment |
+| Document                                                       | What it covers                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [QUICKSTART.md](documentation/QUICKSTART.md)                   | Template deploy to a paired Mac app in about 15 minutes                              |
+| [DEPLOYMENT.md](documentation/DEPLOYMENT.md)                   | Step-by-step deployment and onboarding; publishing as a Railway template             |
+| [ARCHITECTURE.md](documentation/ARCHITECTURE.md)               | Design, access options compared, why proxy attribution can't fail, what Railway owns |
+| [CONFIGURATION.md](documentation/CONFIGURATION.md)             | Every variable and setting, build-time vs runtime, what lives on the volume          |
+| [TOOLS.md](documentation/TOOLS.md)                             | CLI tools for skills, logging them in, keeping them current, adding more             |
+| [WEBHOOKS.md](documentation/WEBHOOKS.md)                       | Opt-in public webhooks and Gmail push, with a restricted reader agent                |
+| [TAILSCALE.md](documentation/TAILSCALE.md)                     | Access policy, auth keys, tags, key expiry, rotation                                 |
+| [DESKTOP.md](documentation/DESKTOP.md)                         | Connecting and pairing the macOS app                                                 |
+| [SECURITY.md](documentation/SECURITY.md)                       | Infrastructure controls, the security audit, recommended agent policy                |
+| [UPGRADING.md](documentation/UPGRADING.md)                     | Upgrades, backups, rollbacks                                                         |
+| [TROUBLESHOOTING.md](documentation/TROUBLESHOOTING.md)         | Symptoms and fixes                                                                   |
+| [RAILWAY_TEMPLATE.md](documentation/RAILWAY_TEMPLATE.md)       | The published template's readme, as shown on the Railway template page               |
+| [ACCEPTANCE_CRITERIA.md](documentation/ACCEPTANCE_CRITERIA.md) | What is verified, what still needs a live deployment                                 |
 
 ## Repository
 
-| Path | Purpose |
-| --- | --- |
-| `Dockerfile` | OpenClaw image: official base, Tailscale binaries, entrypoint, seed config, skill tools, Homebrew seed |
-| `scripts/entrypoint.sh` | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop |
-| `scripts/gog-login.sh` | `gog-login`: Google sign-in for the gog skill through the tailnet (see [TOOLS.md](documentation/TOOLS.md#google-gog)) |
-| `scripts/sidecar.mjs` | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway |
-| `scripts/webhook-relay.mjs` | Opt-in webhook routes on the same port: token check, lockout, size cap |
-| `scripts/as-node.sh` | `as-node <command>`: run a command as `node` from a root `railway ssh` shell |
-| `scripts/openclaw-as-node.sh` | Runs the OpenClaw CLI through `as-node` |
-| `scripts/brew-as-node.sh` | Runs Homebrew through `as-node` (Homebrew refuses root) |
-| `config/openclaw.seed.json` | Baseline config, written on first boot only |
-| `tools/` | Pinned npm tools for skills (Claude Code); Dependabot proposes updates |
-| `.railway/railway.ts` | Railway Infrastructure as Code: one service, one volume |
-| `.env.example` | Runtime variables (documentation only) |
-| `tests/` | Image integration tests, IaC tests |
-| `documentation/` | Guides listed above |
-| `.github/` | CI and Dependabot |
+| Path                          | Purpose                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile`                  | OpenClaw image: official base, Tailscale binaries, entrypoint, seed config, skill tools, Homebrew seed                |
+| `scripts/entrypoint.sh`       | Environment checks, volume preparation, first-boot seeding, Tailscale login, privilege drop                           |
+| `scripts/gog-login.sh`        | `gog-login`: Google sign-in for the gog skill through the tailnet (see [TOOLS.md](documentation/TOOLS.md#google-gog)) |
+| `scripts/sidecar.mjs`         | Runs `tailscaled` (stops the container if it exits) and relays Railway's health check to the loopback Gateway         |
+| `scripts/webhook-relay.mjs`   | Opt-in webhook routes on the same port: token check, lockout, size cap                                                |
+| `scripts/as-node.sh`          | `as-node <command>`: run a command as `node` from a root `railway ssh` shell                                          |
+| `scripts/openclaw-as-node.sh` | Runs the OpenClaw CLI through `as-node`                                                                               |
+| `scripts/brew-as-node.sh`     | Runs Homebrew through `as-node` (Homebrew refuses root)                                                               |
+| `config/openclaw.seed.json`   | Baseline config, written on first boot only                                                                           |
+| `tools/`                      | Pinned npm tools for skills (Claude Code); Dependabot proposes updates                                                |
+| `.railway/railway.ts`         | Railway Infrastructure as Code: one service, one volume                                                               |
+| `.env.example`                | Runtime variables (documentation only)                                                                                |
+| `tests/`                      | Image integration tests, IaC tests                                                                                    |
+| `documentation/`              | Guides listed above                                                                                                   |
+| `.github/`                    | CI and Dependabot                                                                                                     |
 
 ## Test
 
